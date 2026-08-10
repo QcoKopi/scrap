@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Roastery Scraper</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans text-slate-800">
+
+    <div class="max-w-6xl mx-auto px-4 py-8">
+        <!-- Header -->
+        <header class="bg-white shadow-sm rounded-xl p-6 mb-8 flex flex-col md:flex-row justify-between items-center gap-4">
+            <div>
+                <h1 class="text-2xl font-bold text-slate-900">Dashboard Auto Scraper Roastery</h1>
+                <p class="text-slate-500 text-sm mt-1">Pantau dan jalankan pencarian data roastery otomatis langsung dari web browser.</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <span id="connection-status" class="px-3 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-800">Menghubungkan...</span>
+                <button onclick="fetchData()" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium rounded-lg transition">Refresh Data</button>
+            </div>
+        </header>
+
+        <!-- Stats Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                <p class="text-xs font-semibold uppercase tracking-wider text-slate-400">Total Keyword</p>
+                <h3 id="stat-total" class="text-3xl font-extrabold text-slate-900 mt-2">0</h3>
+            </div>
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                <p class="text-xs font-semibold uppercase tracking-wider text-slate-400">Sudah Dicek</p>
+                <h3 id="stat-selesai" class="text-3xl font-extrabold text-emerald-600 mt-2">0</h3>
+            </div>
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                <p class="text-xs font-semibold uppercase tracking-wider text-slate-400">Belum Dicek</p>
+                <h3 id="stat-belum" class="text-3xl font-extrabold text-amber-600 mt-2">0</h3>
+            </div>
+        </div>
+
+        <!-- Control Panel -->
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-100 mb-8 flex flex-col md:flex-row items-center justify-between gap-4">
+            <div>
+                <h3 class="font-semibold text-slate-800">Pengaturan URL Backend (GAS)</h3>
+                <p class="text-xs text-slate-400 mt-0.5">Pastikan URL Web App Google Apps Script Anda benar.</p>
+            </div>
+            <div class="flex w-full md:w-auto gap-2">
+                <input type="text" id="gas-url" value="https://script.google.com/macros/s/AKfycbzVbNpaZzlOWIh5i-Uh7D9n642W4GBt50YWu172_mFGMb-cBczdpH5SOuIBSduEzmk/exec" class="w-full md:w-96 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-500">
+                <button onclick="saveUrl()" class="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white text-sm font-medium rounded-lg transition whitespace-nowrap">Simpan</button>
+            </div>
+        </div>
+
+        <!-- Table Data Section -->
+        <div class="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+            <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
+                <h3 class="font-bold text-slate-800">Antrean Keyword & Hasil Riset</h3>
+                <span id="loading-indicator" class="text-xs text-slate-400 hidden">Memuat data...</span>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse text-sm">
+                    <thead>
+                        <tr class="bg-slate-50 text-slate-500 uppercase text-xs tracking-wider border-b border-slate-100">
+                            <th class="py-3 px-6">Baris</th>
+                            <th class="py-3 px-6">Strategi</th>
+                            <th class="py-3 px-6">Keyword</th>
+                            <th class="py-3 px-6">Instagram ID Ditemukan</th>
+                            <th class="py-3 px-6">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-body" class="divide-y divide-slate-100 text-slate-700">
+                        <tr>
+                            <td colspan="5" class="py-6 text-center text-slate-400">Silakan klik "Refresh Data" untuk memuat tabel.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function getGasUrl() {
+            return document.getElementById('gas-url').value.trim();
+        }
+
+        function saveUrl() {
+            localStorage.setItem('gas_url_custom', getGasUrl());
+            alert('URL Web App berhasil disimpan di browser!');
+            fetchData();
+        }
+
+        window.onload = function() {
+            let saved = localStorage.getItem('gas_url_custom');
+            if (saved) {
+                document.getElementById('gas-url').value = saved;
+            }
+            fetchData();
+        };
+
+        function fetchData() {
+            const url = getGasUrl();
+            const statusBadge = document.getElementById('connection-status');
+            const loading = document.getElementById('loading-indicator');
+            
+            statusBadge.textContent = "Menghubungkan...";
+            statusBadge.className = "px-3 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-800";
+            loading.classList.remove('hidden');
+
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    statusBadge.textContent = "Terhubung";
+                    statusBadge.className = "px-3 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800";
+                    loading.classList.add('hidden');
+
+                    let total = data.length;
+                    let selesai = data.filter(item => item.status && item.status === "Selesai").length;
+                    let belum = total - selesai;
+
+                    document.getElementById('stat-total').textContent = total;
+                    document.getElementById('stat-selesai').textContent = selesai;
+                    document.getElementById('stat-belum').textContent = belum;
+
+                    let tbody = document.getElementById('table-body');
+                    tbody.innerHTML = "";
+
+                    data.slice(0, 50).forEach(item => {
+                        let tr = document.createElement('tr');
+                        tr.className = "hover:bg-slate-50 transition";
+                        
+                        let statusClass = item.status === "Selesai" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700";
+                        
+                        tr.innerHTML = `
+                            <td class="py-3 px-6 font-medium text-slate-500">${item.row}</td>
+                            <td class="py-3 px-6">${item.strategi || '-'}</td>
+                            <td class="py-3 px-6 font-semibold">${item.keyword}</td>
+                            <td class="py-3 px-6 text-blue-600 underline"><a href="${item.instagramId || '#'}" target="_blank">${item.instagramId || 'Belum ada'}</a></td>
+                            <td class="py-3 px-6"><span class="px-2.5 py-1 rounded-full text-xs font-medium ${statusClass}">${item.status || 'Belum'}</span></td>
+                        `;
+                        tbody.appendChild(tr);
+                    });
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    statusBadge.textContent = "Gagal Koneksi";
+                    statusBadge.className = "px-3 py-1 text-xs font-semibold rounded-full bg-rose-100 text-rose-800";
+                    loading.classList.add('hidden');
+                });
+        }
+    </script>
+</body>
+</html>
