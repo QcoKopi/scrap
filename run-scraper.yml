@@ -1,0 +1,54 @@
+name: Run IG Keyword Scraper
+
+# This is the "frontend": go to the repo's Actions tab on GitHub.com,
+# open "Run IG Keyword Scraper", click "Run workflow", fill in the fields
+# below, and press the green button. No terminal required.
+#
+# It also runs automatically every day at 02:00 UTC (09:00 WIB) to chip
+# away at the keyword queue -- remove the `schedule:` block below if you
+# only want manual runs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_keywords:
+        description: "How many queued keywords to process this run (controls run time, not cost — see README)"
+        required: false
+        default: "200"
+      geo_location:
+        description: "Oxylabs geo_location for the search"
+        required: false
+        default: "Indonesia"
+  schedule:
+    - cron: "0 2 * * *"
+
+# Prevent two runs from racing each other and double-processing keywords.
+concurrency:
+  group: ig-keyword-scraper
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run scraper
+        env:
+          GAS_WEB_APP_URL: ${{ secrets.GAS_WEB_APP_URL }}
+          OXYLABS_USERNAME: ${{ secrets.OXYLABS_USERNAME }}
+          OXYLABS_PASSWORD: ${{ secrets.OXYLABS_PASSWORD }}
+          GAS_SHARED_TOKEN: ${{ secrets.GAS_SHARED_TOKEN }}
+          MAX_KEYWORDS_PER_RUN: ${{ github.event.inputs.max_keywords || '200' }}
+          OXYLABS_GEO_LOCATION: ${{ github.event.inputs.geo_location || 'Indonesia' }}
+        run: python src/auto_pipeline.py

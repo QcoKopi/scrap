@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Roastery IG Keyword Research — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  :root{
+    --bg:#1c140f;
+    --surface:#261b14;
+    --surface-2:#33251a;
+    --line:#4a3626;
+    --text:#f2e9dd;
+    --text-muted:#b6a38c;
+    --gold:#cd9a44;
+    --green:#7a9471;
+    --rust:#b15a3a;
+  }
+  *{box-sizing:border-box;}
+  @media (prefers-reduced-motion: reduce){
+    *{animation:none !important; transition:none !important;}
+  }
+  body{
+    margin:0;
+    background:
+      radial-gradient(1200px 600px at 15% -10%, #2a1d14 0%, transparent 60%),
+      var(--bg);
+    color:var(--text);
+    font-family:'IBM Plex Sans', sans-serif;
+    min-height:100vh;
+  }
+  .wrap{max-width:960px; margin:0 auto; padding:32px 20px 80px;}
+  header{display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:28px;}
+  h1{
+    font-family:'Fraunces', serif;
+    font-weight:600;
+    font-size:clamp(24px, 4vw, 34px);
+    margin:0 0 6px;
+    letter-spacing:-0.01em;
+  }
+  .eyebrow{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+    color:var(--gold);
+    margin:0 0 8px;
+  }
+  .sub{color:var(--text-muted); font-size:14px; margin:0;}
+
+  .config{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:16px;
+    margin-bottom:24px;
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px;
+    align-items:center;
+  }
+  .config input{
+    flex:1;
+    min-width:220px;
+    background:var(--bg);
+    border:1px solid var(--line);
+    color:var(--text);
+    padding:9px 11px;
+    border-radius:6px;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:13px;
+  }
+  .config input:focus{outline:2px solid var(--gold); outline-offset:1px;}
+  button{
+    background:var(--gold);
+    color:#1c140f;
+    border:none;
+    padding:9px 16px;
+    border-radius:6px;
+    font-weight:600;
+    font-size:13px;
+    cursor:pointer;
+    font-family:'IBM Plex Sans', sans-serif;
+  }
+  button:hover{filter:brightness(1.08);}
+  button.ghost{
+    background:transparent;
+    color:var(--text-muted);
+    border:1px solid var(--line);
+  }
+  button.ghost:hover{color:var(--text); border-color:var(--gold);}
+
+  .stats{display:grid; grid-template-columns:repeat(auto-fit, minmax(140px,1fr)); gap:12px; margin-bottom:20px;}
+  .stat{background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:16px;}
+  .stat .n{font-family:'Fraunces', serif; font-size:28px; font-weight:600;}
+  .stat .l{font-size:12px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.08em; margin-top:2px;}
+
+  /* signature element: roast-timeline progress bar */
+  .roast{background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:18px 18px 14px; margin-bottom:28px;}
+  .roast-head{display:flex; justify-content:space-between; font-size:12px; color:var(--text-muted); margin-bottom:10px; font-family:'IBM Plex Mono', monospace;}
+  .track{position:relative; height:10px; background:var(--surface-2); border-radius:999px; overflow:hidden;}
+  .fill{height:100%; background:linear-gradient(90deg, var(--rust), var(--gold), var(--green)); border-radius:999px; width:0%; transition:width 0.6s ease;}
+  .ticks{display:flex; justify-content:space-between; margin-top:8px; font-size:11px; color:var(--text-muted); font-family:'IBM Plex Mono', monospace;}
+
+  .results{display:flex; flex-direction:column; gap:10px;}
+  .card{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:14px 16px;
+    opacity:0;
+    animation:in 0.4s ease forwards;
+  }
+  @keyframes in{from{opacity:0; transform:translateY(4px);} to{opacity:1; transform:none;}}
+  .card-top{display:flex; justify-content:space-between; gap:12px; align-items:baseline; flex-wrap:wrap;}
+  .card a.title{color:var(--text); text-decoration:none; font-weight:600; font-size:15px;}
+  .card a.title:hover{color:var(--gold);}
+  .handle{font-family:'IBM Plex Mono', monospace; color:var(--green); font-size:12px; white-space:nowrap;}
+  .kw{
+    display:inline-block; margin-top:6px;
+    font-family:'IBM Plex Mono', monospace; font-size:11px;
+    color:var(--gold); background:rgba(205,154,68,0.1);
+    border:1px solid rgba(205,154,68,0.3);
+    padding:2px 8px; border-radius:999px;
+  }
+  .desc{color:var(--text-muted); font-size:13.5px; margin-top:8px; line-height:1.5;}
+  .desc.empty{color:var(--rust); font-style:italic;}
+  .bio{color:var(--text); font-size:13px; margin-top:8px; padding-top:8px; border-top:1px dashed var(--line); line-height:1.5;}
+  .bio .label{color:var(--green); font-family:'IBM Plex Mono', monospace; font-size:11px; text-transform:uppercase; letter-spacing:0.06em; margin-right:6px;}
+  .bio.status-only{color:var(--text-muted); font-style:italic;}
+  .empty-state, .loading{color:var(--text-muted); padding:40px 0; text-align:center; font-size:14px;}
+  footer{margin-top:40px; color:var(--text-muted); font-size:12px; text-align:center;}
+  footer a{color:var(--gold);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <p class="eyebrow">Roastery · Riset Keyword IG</p>
+      <h1>Dashboard Hasil Scraping</h1>
+      <p class="sub">Data ditarik langsung dari Google Sheet (read-only, tanpa perlu login).</p>
+    </div>
+    <button class="ghost" id="refreshBtn">↻ Refresh</button>
+  </header>
+
+  <div class="config">
+    <input id="hasilUrl" placeholder="URL CSV published sheet 'Hasil' (File → Share → Publish to web)" />
+    <input id="keywordUrl" placeholder="Opsional: URL CSV sheet 'Keyword' (untuk total antrean)" />
+    <input id="bioUrl" placeholder="Opsional: URL CSV sheet 'Bio' (untuk tampilkan bio IG)" />
+    <button id="loadBtn">Muat data</button>
+  </div>
+
+  <div class="roast" id="roastBox" style="display:none;">
+    <div class="roast-head">
+      <span id="roastLabel">Progres antrean keyword</span>
+      <span id="roastPct">0%</span>
+    </div>
+    <div class="track"><div class="fill" id="fill"></div></div>
+    <div class="ticks"><span>Mulai</span><span>25%</span><span>50%</span><span>75%</span><span>Selesai</span></div>
+  </div>
+
+  <div class="stats" id="stats" style="display:none;">
+    <div class="stat"><div class="n" id="statRows">0</div><div class="l">Baris hasil</div></div>
+    <div class="stat"><div class="n" id="statKw">0</div><div class="l">Keyword tercakup</div></div>
+    <div class="stat"><div class="n" id="statEmpty">0</div><div class="l">Deskripsi kosong</div></div>
+    <div class="stat"><div class="n" id="statIg">0</div><div class="l">Handle IG unik</div></div>
+  </div>
+
+  <div id="content" class="loading">Masukkan URL CSV di atas lalu klik "Muat data".</div>
+
+  <footer>
+    Cara dapat URL CSV: buka tiap tab (Hasil / Keyword / Bio) di sheet, lihat <code>#gid=...</code> di address bar, lalu pakai
+    <code>https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/export?format=csv&amp;gid=GID</code> (gid beda per tab, jadi URL tidak akan tertukar sama).
+    Alternatif: <strong>File → Share → Publish to web</strong> — pastikan dropdown sheet diganti sebelum publish ulang, atau tab bisa menghasilkan link yang sama.<br/>
+    Menjalankan scraping (termasuk bio) dilakukan dari tab <strong>Actions</strong> di GitHub repo, bukan dari halaman ini.
+  </footer>
+</div>
+
+<script>
+const qs = new URLSearchParams(location.search);
+const hasilInput = document.getElementById('hasilUrl');
+const keywordInput = document.getElementById('keywordUrl');
+const bioInput = document.getElementById('bioUrl');
+if (qs.get('results')) hasilInput.value = qs.get('results');
+if (qs.get('keywords')) keywordInput.value = qs.get('keywords');
+if (qs.get('bio')) bioInput.value = qs.get('bio');
+
+function setUrlParams(){
+  const p = new URLSearchParams();
+  if (hasilInput.value) p.set('results', hasilInput.value);
+  if (keywordInput.value) p.set('keywords', keywordInput.value);
+  if (bioInput.value) p.set('bio', bioInput.value);
+  history.replaceState(null, '', p.toString() ? '?' + p.toString() : location.pathname);
+}
+
+function fetchCsv(url){
+  return new Promise((resolve, reject) => {
+    Papa.parse(url, {
+      download: true,
+      header: true,
+      skipEmptyLines: true,
+      complete: (res) => resolve(res.data),
+      error: reject
+    });
+  });
+}
+
+async function load(){
+  const content = document.getElementById('content');
+  const hasilUrl = hasilInput.value.trim();
+  if (!hasilUrl){
+    content.className = 'empty-state';
+    content.textContent = 'Masukkan URL CSV sheet "Hasil" terlebih dahulu.';
+    return;
+  }
+  setUrlParams();
+  content.className = 'loading';
+  content.textContent = 'Memuat data...';
+
+  try {
+    const rows = await fetchCsv(hasilUrl);
+
+    let bioMap = new Map();
+    if (bioInput.value.trim()){
+      try {
+        const bioRows = await fetchCsv(bioInput.value.trim());
+        bioRows.forEach(b => {
+          if (b['Instagram Handle']) bioMap.set(b['Instagram Handle'], b);
+        });
+      } catch(e){ /* bio sheet optional, ignore errors */ }
+    }
+
+    renderResults(rows, bioMap);
+
+    if (keywordInput.value.trim()){
+      try {
+        const kwRows = await fetchCsv(keywordInput.value.trim());
+        renderRoast(rows, kwRows.length);
+      } catch(e){ /* keyword sheet optional, ignore errors */ }
+    }
+  } catch (err){
+    content.className = 'empty-state';
+    content.textContent = 'Gagal memuat CSV. Pastikan sheet sudah di-"Publish to web" dan URL benar.';
+  }
+}
+
+function renderRoast(rows, totalKeywords){
+  const uniqueKw = new Set(rows.map(r => r['Account/Keyword']).filter(Boolean));
+  const pct = totalKeywords > 0 ? Math.min(100, Math.round((uniqueKw.size / totalKeywords) * 100)) : 0;
+  document.getElementById('roastBox').style.display = 'block';
+  document.getElementById('fill').style.width = pct + '%';
+  document.getElementById('roastPct').textContent = pct + '% (' + uniqueKw.size + ' / ' + totalKeywords + ' keyword)';
+}
+
+function bioLineFor(handle, bioMap){
+  if (!handle || !bioMap || !bioMap.has(handle)) return '';
+  const b = bioMap.get(handle);
+  const status = b['Status'] || '';
+  if (status === 'OK' && b['Bio'] && b['Bio'].trim()){
+    return `<div class="bio"><span class="label">Bio</span>${escapeHtml(b['Bio'])}</div>`;
+  }
+  if (status){
+    return `<div class="bio status-only"><span class="label">Bio</span>${escapeHtml(status)}</div>`;
+  }
+  return '';
+}
+
+function renderResults(rows, bioMap){
+  const content = document.getElementById('content');
+  const validRows = rows.filter(r => r['Judul'] || r['URL']);
+
+  if (validRows.length === 0){
+    content.className = 'empty-state';
+    content.textContent = 'Belum ada hasil di sheet "Hasil". Jalankan workflow di tab Actions dulu.';
+    document.getElementById('stats').style.display = 'none';
+    return;
+  }
+
+  const uniqueKw = new Set(validRows.map(r => r['Account/Keyword']).filter(Boolean));
+  const uniqueIg = new Set(validRows.map(r => r['Instagram Handle']).filter(Boolean));
+  const emptyDesc = validRows.filter(r => !r['Deskripsi'] || !r['Deskripsi'].trim()).length;
+
+  document.getElementById('stats').style.display = 'grid';
+  document.getElementById('statRows').textContent = validRows.length;
+  document.getElementById('statKw').textContent = uniqueKw.size;
+  document.getElementById('statEmpty').textContent = emptyDesc;
+  document.getElementById('statIg').textContent = uniqueIg.size;
+
+  const latest = validRows.slice(-40).reverse();
+  content.className = 'results';
+  content.innerHTML = latest.map((r, i) => `
+    <div class="card" style="animation-delay:${Math.min(i*20,300)}ms">
+      <div class="card-top">
+        <a class="title" href="${escapeAttr(r['URL']||'#')}" target="_blank" rel="noopener">${escapeHtml(r['Judul']||r['URL']||'(tanpa judul)')}</a>
+        ${r['Instagram Handle'] ? `<span class="handle">${escapeHtml(r['Instagram Handle'])}</span>` : ''}
+      </div>
+      <div class="kw">${escapeHtml(r['Account/Keyword']||'-')}</div>
+      <div class="desc ${!r['Deskripsi'] || !r['Deskripsi'].trim() ? 'empty' : ''}">
+        ${r['Deskripsi'] && r['Deskripsi'].trim() ? escapeHtml(r['Deskripsi']) : 'Deskripsi kosong'}
+      </div>
+      ${bioLineFor(r['Instagram Handle'], bioMap)}
+    </div>
+  `).join('');
+}
+
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function escapeAttr(s){ return escapeHtml(s); }
+
+document.getElementById('loadBtn').addEventListener('click', load);
+document.getElementById('refreshBtn').addEventListener('click', load);
+if (hasilInput.value) load();
+</script>
+</body>
+</html>
