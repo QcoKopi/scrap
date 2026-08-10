@@ -20,7 +20,7 @@
  */
 
 var IG_PLACEHOLDER_HANDLES = ["@reel", "@p", "@instagram", ""];
-var BIO_HEADERS = ["No", "Instagram Handle", "Nama Lengkap", "Bio", "Followers", "Following", "Posts", "Website", "Private", "Verified", "Status"];
+var BIO_HEADERS = ["No", "Account ID", "Instagram Handle", "Nama Lengkap", "Bio", "Followers", "Following", "Posts", "Website", "Private", "Verified", "Status"];
 
 function isAuthorized_(params) {
   var expected = PropertiesService.getScriptProperties().getProperty('SHARED_TOKEN');
@@ -31,6 +31,21 @@ function isAuthorized_(params) {
 function isRealHandle_(handle) {
   if (!handle) return false;
   return IG_PLACEHOLDER_HANDLES.indexOf(handle) === -1;
+}
+
+// Deterministic short ID per Instagram handle -- same handle always maps to
+// the same 8-char ID, computed independently wherever it's needed (Hasil
+// rows, Bio rows) with no shared lookup table to keep in sync. This is what
+// lets one account (1 handle) be joined across many Hasil rows via a stable
+// key, instead of only the raw handle text.
+function computeAccountId_(handle) {
+  if (!handle) return "";
+  var digestBytes = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, handle, Utilities.Charset.UTF_8);
+  var hex = digestBytes.map(function (b) {
+    var v = (b < 0 ? b + 256 : b).toString(16);
+    return v.length === 1 ? "0" + v : v;
+  }).join("");
+  return hex.substring(0, 8).toUpperCase();
 }
 
 // Creates the "Bio" sheet tab with the correct header row if it doesn't
@@ -44,6 +59,17 @@ function getOrCreateBioSheet_(ss) {
     sheet.setFrozenRows(1);
   }
   return sheet;
+}
+
+// "Hasil" already has a fixed 11-column layout the user set up manually, so
+// Account ID is added as a new column L at the end (not inserted in the
+// middle) to avoid disturbing existing data/columns. Header is added
+// automatically if missing.
+function ensureHasilAccountIdHeader_(sheetRes) {
+  var headerCell = sheetRes.getRange(1, 12);
+  if (!headerCell.getValue()) {
+    headerCell.setValue("Account ID");
+  }
 }
 
 function doGet(e) {
@@ -121,12 +147,12 @@ function bioQueueResponse_() {
   }
 
   var alreadyDone = {};
-  if (sheetBio) {
-    var dataBio = sheetBio.getDataRange().getValues();
-    for (var k = 1; k < dataBio.length; k++) {
-      if (dataBio[k] && dataBio[k][1]) {
-        alreadyDone[dataBio[k][1]] = true;
-      }
+  var dataBio = sheetBio.getDataRange().getValues();
+  for (var k = 1; k < dataBio.length; k++) {
+    // Column C (index 2) = "Instagram Handle" in the Bio sheet layout:
+    // No, Account ID, Instagram Handle, ...
+    if (dataBio[k] && dataBio[k][2]) {
+      alreadyDone[dataBio[k][2]] = true;
     }
   }
 
@@ -171,6 +197,8 @@ function appendHasilRows_(params) {
                          .setMimeType(ContentService.MimeType.JSON);
   }
 
+  ensureHasilAccountIdHeader_(sheetRes);
+
   var items = Array.isArray(params.items) ? params.items : [params];
 
   var lastRow = sheetRes.getLastRow();
@@ -178,6 +206,7 @@ function appendHasilRows_(params) {
 
   var rowsToAppend = items.map(function (p) {
     var descText = p.deskripsi || p.snippet || p.description || "";
+    var handle = p.instagramHandle || "";
     var out = [
       nextNo,
       p.account || params.account || "",
@@ -189,7 +218,8 @@ function appendHasilRows_(params) {
       descText,
       p.faviconSource || "",
       p.urutanHasil || "",
-      p.instagramHandle || ""
+      handle,
+      isRealHandle_(handle) ? computeAccountId_(handle) : ""
     ];
     nextNo += 1;
     return out;
@@ -218,9 +248,11 @@ function appendBioRows_(params) {
   var nextNo = lastRow >= 1 ? lastRow : 1;
 
   var rowsToAppend = items.map(function (p) {
+    var handle = p.instagramHandle || "";
     var out = [
       nextNo,
-      p.instagramHandle || "",
+      computeAccountId_(handle),
+      handle,
       p.namaLengkap || "",
       p.bio || "",
       p.followers || "",
