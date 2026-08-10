@@ -128,6 +128,9 @@
   }
   .desc{color:var(--text-muted); font-size:13.5px; margin-top:8px; line-height:1.5;}
   .desc.empty{color:var(--rust); font-style:italic;}
+  .bio{color:var(--text); font-size:13px; margin-top:8px; padding-top:8px; border-top:1px dashed var(--line); line-height:1.5;}
+  .bio .label{color:var(--green); font-family:'IBM Plex Mono', monospace; font-size:11px; text-transform:uppercase; letter-spacing:0.06em; margin-right:6px;}
+  .bio.status-only{color:var(--text-muted); font-style:italic;}
   .empty-state, .loading{color:var(--text-muted); padding:40px 0; text-align:center; font-size:14px;}
   footer{margin-top:40px; color:var(--text-muted); font-size:12px; text-align:center;}
   footer a{color:var(--gold);}
@@ -146,7 +149,8 @@
 
   <div class="config">
     <input id="hasilUrl" placeholder="URL CSV published sheet 'Hasil' (File → Share → Publish to web)" />
-    <input id="keywordUrl" placeholder="Opsional: URL CSV published sheet 'Keyword' (untuk total antrean)" />
+    <input id="keywordUrl" placeholder="Opsional: URL CSV sheet 'Keyword' (untuk total antrean)" />
+    <input id="bioUrl" placeholder="Opsional: URL CSV sheet 'Bio' (untuk tampilkan bio IG)" />
     <button id="loadBtn">Muat data</button>
   </div>
 
@@ -169,8 +173,10 @@
   <div id="content" class="loading">Masukkan URL CSV di atas lalu klik "Muat data".</div>
 
   <footer>
-    Cara publish sheet: <strong>File → Share → Publish to web</strong> → pilih sheet "Hasil" → format CSV → Publish.<br/>
-    Menjalankan scraping dilakukan dari tab <strong>Actions</strong> di GitHub repo, bukan dari halaman ini.
+    Cara dapat URL CSV: buka tiap tab (Hasil / Keyword / Bio) di sheet, lihat <code>#gid=...</code> di address bar, lalu pakai
+    <code>https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/export?format=csv&amp;gid=GID</code> (gid beda per tab, jadi URL tidak akan tertukar sama).
+    Alternatif: <strong>File → Share → Publish to web</strong> — pastikan dropdown sheet diganti sebelum publish ulang, atau tab bisa menghasilkan link yang sama.<br/>
+    Menjalankan scraping (termasuk bio) dilakukan dari tab <strong>Actions</strong> di GitHub repo, bukan dari halaman ini.
   </footer>
 </div>
 
@@ -178,13 +184,16 @@
 const qs = new URLSearchParams(location.search);
 const hasilInput = document.getElementById('hasilUrl');
 const keywordInput = document.getElementById('keywordUrl');
+const bioInput = document.getElementById('bioUrl');
 if (qs.get('results')) hasilInput.value = qs.get('results');
 if (qs.get('keywords')) keywordInput.value = qs.get('keywords');
+if (qs.get('bio')) bioInput.value = qs.get('bio');
 
 function setUrlParams(){
   const p = new URLSearchParams();
   if (hasilInput.value) p.set('results', hasilInput.value);
   if (keywordInput.value) p.set('keywords', keywordInput.value);
+  if (bioInput.value) p.set('bio', bioInput.value);
   history.replaceState(null, '', p.toString() ? '?' + p.toString() : location.pathname);
 }
 
@@ -214,7 +223,18 @@ async function load(){
 
   try {
     const rows = await fetchCsv(hasilUrl);
-    renderResults(rows);
+
+    let bioMap = new Map();
+    if (bioInput.value.trim()){
+      try {
+        const bioRows = await fetchCsv(bioInput.value.trim());
+        bioRows.forEach(b => {
+          if (b['Instagram Handle']) bioMap.set(b['Instagram Handle'], b);
+        });
+      } catch(e){ /* bio sheet optional, ignore errors */ }
+    }
+
+    renderResults(rows, bioMap);
 
     if (keywordInput.value.trim()){
       try {
@@ -236,7 +256,20 @@ function renderRoast(rows, totalKeywords){
   document.getElementById('roastPct').textContent = pct + '% (' + uniqueKw.size + ' / ' + totalKeywords + ' keyword)';
 }
 
-function renderResults(rows){
+function bioLineFor(handle, bioMap){
+  if (!handle || !bioMap || !bioMap.has(handle)) return '';
+  const b = bioMap.get(handle);
+  const status = b['Status'] || '';
+  if (status === 'OK' && b['Bio'] && b['Bio'].trim()){
+    return `<div class="bio"><span class="label">Bio</span>${escapeHtml(b['Bio'])}</div>`;
+  }
+  if (status){
+    return `<div class="bio status-only"><span class="label">Bio</span>${escapeHtml(status)}</div>`;
+  }
+  return '';
+}
+
+function renderResults(rows, bioMap){
   const content = document.getElementById('content');
   const validRows = rows.filter(r => r['Judul'] || r['URL']);
 
@@ -269,6 +302,7 @@ function renderResults(rows){
       <div class="desc ${!r['Deskripsi'] || !r['Deskripsi'].trim() ? 'empty' : ''}">
         ${r['Deskripsi'] && r['Deskripsi'].trim() ? escapeHtml(r['Deskripsi']) : 'Deskripsi kosong'}
       </div>
+      ${bioLineFor(r['Instagram Handle'], bioMap)}
     </div>
   `).join('');
 }
