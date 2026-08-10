@@ -20,6 +20,7 @@
  */
 
 var IG_PLACEHOLDER_HANDLES = ["@reel", "@p", "@instagram", ""];
+var BIO_HEADERS = ["No", "Instagram Handle", "Nama Lengkap", "Bio", "Followers", "Following", "Posts", "Website", "Private", "Verified", "Status"];
 
 function isAuthorized_(params) {
   var expected = PropertiesService.getScriptProperties().getProperty('SHARED_TOKEN');
@@ -30,6 +31,19 @@ function isAuthorized_(params) {
 function isRealHandle_(handle) {
   if (!handle) return false;
   return IG_PLACEHOLDER_HANDLES.indexOf(handle) === -1;
+}
+
+// Creates the "Bio" sheet tab with the correct header row if it doesn't
+// exist yet, so nobody has to set it up by hand (and risk a typo'd header
+// that silently breaks column alignment).
+function getOrCreateBioSheet_(ss) {
+  var sheet = ss.getSheetByName("Bio");
+  if (!sheet) {
+    sheet = ss.insertSheet("Bio");
+    sheet.getRange(1, 1, 1, BIO_HEADERS.length).setValues([BIO_HEADERS]);
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
 }
 
 function doGet(e) {
@@ -86,12 +100,13 @@ function keywordQueueResponse_() {
 function bioQueueResponse_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheetRes = ss.getSheetByName("Hasil");
-  var sheetBio = ss.getSheetByName("Bio");
 
   if (!sheetRes) {
     return ContentService.createTextOutput(JSON.stringify([]))
                          .setMimeType(ContentService.MimeType.JSON);
   }
+
+  var sheetBio = getOrCreateBioSheet_(ss);
 
   var dataRes = sheetRes.getDataRange().getValues();
   // "Instagram Handle" is column K (index 10) per the Hasil header row.
@@ -195,12 +210,7 @@ function appendHasilRows_(params) {
 
 function appendBioRows_(params) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheetBio = ss.getSheetByName("Bio");
-
-  if (!sheetBio) {
-    return ContentService.createTextOutput(JSON.stringify({status: "error", message: "sheet Bio not found -- create it first, see README"}))
-                         .setMimeType(ContentService.MimeType.JSON);
-  }
+  var sheetBio = getOrCreateBioSheet_(ss);
 
   var items = Array.isArray(params.items) ? params.items : [params];
 
