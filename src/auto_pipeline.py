@@ -71,7 +71,14 @@ def _session_with_retries() -> requests.Session:
 
 def fetch_queue(session: requests.Session) -> List[Dict[str, Any]]:
     print("Mengambil antrean keyword dari Google Sheets...")
-    response = session.get(GAS_WEB_APP_URL, timeout=15)
+    try:
+        response = session.get(GAS_WEB_APP_URL, timeout=30)
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            f"Gagal terhubung ke GAS (gangguan jaringan): {exc}\n"
+            "Ini biasanya sementara -- coba jalankan workflow lagi."
+        ) from exc
+
     if response.status_code != 200:
         raise RuntimeError(f"Gagal terhubung ke GAS. Status: {response.status_code}")
 
@@ -157,9 +164,13 @@ def query_oxylabs(session: requests.Session, keyword: str) -> Optional[Dict[str,
         "geo_location": GEO_LOCATION,
         "parse": True,
     }
-    resp = session.post(
-        OXYLABS_URL, auth=(OXYLABS_USERNAME, OXYLABS_PASSWORD), json=payload, timeout=30
-    )
+    try:
+        resp = session.post(
+            OXYLABS_URL, auth=(OXYLABS_USERNAME, OXYLABS_PASSWORD), json=payload, timeout=30
+        )
+    except requests.RequestException as exc:
+        print(f"  -> [GANGGUAN JARINGAN KE OXYLABS]: {exc}")
+        return None
     if resp.status_code != 200:
         print(f"  -> [GAGAL OXYLABS] Status Code: {resp.status_code} | {resp.text[:200]}")
         return None
@@ -177,7 +188,11 @@ def send_results(session: requests.Session, keyword: str, row: int, rows: List[D
     if GAS_SHARED_TOKEN:
         payload["token"] = GAS_SHARED_TOKEN
 
-    resp = session.post(GAS_WEB_APP_URL, json=payload, timeout=20)
+    try:
+        resp = session.post(GAS_WEB_APP_URL, json=payload, timeout=20)
+    except requests.RequestException as exc:
+        print(f"  -> [GANGGUAN JARINGAN KE SHEET]: {exc}")
+        return False
     if resp.status_code != 200:
         print(f"  -> [GAGAL KIRIM KE SHEET] Status Code: {resp.status_code}")
         return False
@@ -206,6 +221,19 @@ def main() -> None:
         print(f"ERROR: variabel lingkungan berikut belum diset: {', '.join(missing)}")
         print("Lihat .env.example / README.md untuk cara mengatur GitHub Actions secrets.")
         sys.exit(1)
+
+    # TEMPORARY DEBUG (safe to print -- never prints the actual password,
+    # only lengths/partial values, to diagnose a persistent 401 that isn't
+    # explained by a wrong Oxylabs password). Remove once resolved.
+    print(
+        f"[DEBUG] OXYLABS_USERNAME = {OXYLABS_USERNAME!r} (len={len(OXYLABS_USERNAME)})"
+    )
+    print(f"[DEBUG] OXYLABS_PASSWORD length = {len(OXYLABS_PASSWORD)} characters")
+    print(
+        f"[DEBUG] OXYLABS_PASSWORD starts/ends with whitespace? "
+        f"{OXYLABS_PASSWORD != OXYLABS_PASSWORD.strip()}"
+    )
+    print(f"[DEBUG] GAS_WEB_APP_URL = {GAS_WEB_APP_URL!r}")
 
     session = _session_with_retries()
 
