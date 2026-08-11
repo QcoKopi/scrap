@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Roastery IG Research — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  :root{
+    --bg:#1c140f; --surface:#261b14; --surface-2:#33251a; --line:#4a3626;
+    --text:#f2e9dd; --text-muted:#b6a38c; --gold:#cd9a44; --green:#7a9471; --rust:#b15a3a;
+  }
+  *{box-sizing:border-box;}
+  @media (prefers-reduced-motion: reduce){ *{animation:none !important; transition:none !important;} }
+  body{
+    margin:0;
+    background: radial-gradient(1200px 600px at 15% -10%, #2a1d14 0%, transparent 60%), var(--bg);
+    color:var(--text); font-family:'IBM Plex Sans', sans-serif; min-height:100vh;
+  }
+  .wrap{max-width:1080px; margin:0 auto; padding:32px 20px 80px;}
+  header{margin-bottom:20px;}
+  h1{font-family:'Fraunces', serif; font-weight:600; font-size:clamp(22px, 4vw, 32px); margin:0 0 6px; letter-spacing:-0.01em;}
+  h2{font-family:'Fraunces', serif; font-weight:600; font-size:19px; margin:32px 0 12px;}
+  .eyebrow{font-family:'IBM Plex Mono', monospace; font-size:12px; letter-spacing:0.12em; text-transform:uppercase; color:var(--gold); margin:0 0 8px;}
+  .sub{color:var(--text-muted); font-size:14px; margin:0;}
+  a{color:var(--gold);}
+
+  .config{background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:8px; display:flex; flex-wrap:wrap; gap:10px; align-items:center;}
+  .config input{flex:1; min-width:240px; background:var(--bg); border:1px solid var(--line); color:var(--text); padding:9px 11px; border-radius:6px; font-family:'IBM Plex Mono', monospace; font-size:13px;}
+  .config input:focus{outline:2px solid var(--gold); outline-offset:1px;}
+  .setup-hint{font-size:12.5px; color:var(--text-muted); margin:8px 0 24px; line-height:1.5;}
+  button{background:var(--gold); color:#1c140f; border:none; padding:9px 16px; border-radius:6px; font-weight:600; font-size:13px; cursor:pointer; font-family:'IBM Plex Sans', sans-serif;}
+  button:hover{filter:brightness(1.08);}
+  button.ghost{background:transparent; color:var(--text-muted); border:1px solid var(--line);}
+  button.ghost:hover{color:var(--text); border-color:var(--gold);}
+
+  /* Tab menu */
+  .tabs{display:flex; gap:4px; border-bottom:1px solid var(--line); margin-bottom:24px;}
+  .tab-btn{
+    background:none; border:none; color:var(--text-muted); font-family:'IBM Plex Sans', sans-serif;
+    font-size:14px; font-weight:500; padding:10px 4px; margin-right:20px; cursor:pointer;
+    border-bottom:2px solid transparent; border-radius:0;
+  }
+  .tab-btn:hover{color:var(--text);}
+  .tab-btn.active{color:var(--gold); border-bottom-color:var(--gold);}
+  .tab-panel{display:none;}
+  .tab-panel.active{display:block;}
+
+  .callout{background:rgba(177,90,58,0.12); border:1px solid rgba(177,90,58,0.4); border-radius:10px; padding:16px 18px; margin:16px 0 24px; font-size:13.5px; line-height:1.6;}
+  .callout .label{font-family:'IBM Plex Mono', monospace; font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:var(--rust); display:block; margin-bottom:6px;}
+
+  .stats{display:grid; grid-template-columns:repeat(auto-fit, minmax(140px,1fr)); gap:12px; margin-bottom:20px;}
+  .stat{background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:14px 16px;}
+  .stat .n{font-family:'Fraunces', serif; font-size:24px; font-weight:600;}
+  .stat .l{font-size:11px; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em; margin-top:2px;}
+
+  .roast{background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:18px 18px 14px; margin-bottom:24px;}
+  .roast-head{display:flex; justify-content:space-between; font-size:12px; color:var(--text-muted); margin-bottom:10px; font-family:'IBM Plex Mono', monospace;}
+  .track{position:relative; height:10px; background:var(--surface-2); border-radius:999px; overflow:hidden;}
+  .fill{height:100%; background:linear-gradient(90deg, var(--rust), var(--gold), var(--green)); border-radius:999px; width:0%; transition:width 0.6s ease;}
+  .ticks{display:flex; justify-content:space-between; margin-top:8px; font-size:11px; color:var(--text-muted); font-family:'IBM Plex Mono', monospace;}
+
+  table{width:100%; border-collapse:collapse; font-size:13px; background:var(--surface); border:1px solid var(--line); border-radius:10px; overflow:hidden;}
+  th, td{padding:9px 12px; text-align:left; border-bottom:1px solid var(--line);}
+  th{background:var(--surface-2); font-family:'IBM Plex Mono', monospace; font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:var(--text-muted); font-weight:500;}
+  td.num{font-family:'IBM Plex Mono', monospace; text-align:right;}
+  tr:last-child td{border-bottom:none;}
+  tr:hover td{background:rgba(205,154,68,0.05);}
+  .area-name{font-weight:600; color:var(--gold);}
+  .muted{color:var(--text-muted); font-style:italic;}
+  .table-wrap{overflow-x:auto; margin-bottom:8px;}
+
+  .results{display:flex; flex-direction:column; gap:10px;}
+  .card{background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:14px 16px; opacity:0; animation:in 0.4s ease forwards;}
+  @keyframes in{from{opacity:0; transform:translateY(4px);} to{opacity:1; transform:none;}}
+  .card-top{display:flex; justify-content:space-between; gap:12px; align-items:baseline; flex-wrap:wrap;}
+  .card a.title{color:var(--text); text-decoration:none; font-weight:600; font-size:15px;}
+  .card a.title:hover{color:var(--gold);}
+  .handle{font-family:'IBM Plex Mono', monospace; color:var(--green); font-size:12px; white-space:nowrap;}
+  .kw{display:inline-block; margin-top:6px; font-family:'IBM Plex Mono', monospace; font-size:11px; color:var(--gold); background:rgba(205,154,68,0.1); border:1px solid rgba(205,154,68,0.3); padding:2px 8px; border-radius:999px;}
+  .desc{color:var(--text-muted); font-size:13.5px; margin-top:8px; line-height:1.5;}
+  .desc.empty{color:var(--rust); font-style:italic;}
+  .bio{color:var(--text); font-size:13px; margin-top:8px; padding-top:8px; border-top:1px dashed var(--line); line-height:1.5;}
+  .bio .label{color:var(--green); font-family:'IBM Plex Mono', monospace; font-size:11px; text-transform:uppercase; letter-spacing:0.06em; margin-right:6px;}
+  .bio.status-only{color:var(--text-muted); font-style:italic;}
+
+  .leaderboard{display:flex; flex-direction:column; gap:8px;}
+  .lb-item{background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:12px 14px; display:flex; gap:12px; align-items:baseline; flex-wrap:wrap;}
+  .lb-rank{font-family:'Fraunces', serif; font-size:18px; color:var(--gold); min-width:24px;}
+  .lb-body{flex:1; min-width:200px;}
+  .lb-hook{font-weight:600; font-size:13.5px;}
+  .lb-meta{font-size:11px; color:var(--text-muted); margin-top:3px; font-family:'IBM Plex Mono', monospace;}
+  .lb-metric{font-family:'IBM Plex Mono', monospace; font-size:13px; color:var(--green); white-space:nowrap;}
+
+  .empty-state, .loading{color:var(--text-muted); padding:40px 20px; text-align:center; font-size:14px; background:var(--surface); border:1px solid var(--line); border-radius:10px;}
+  footer{margin-top:40px; color:var(--text-muted); font-size:12px; text-align:center;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Roastery · Riset Instagram Kompetitor</p>
+    <h1>Dashboard</h1>
+    <p class="sub">Data langsung dari Google Sheet kamu — sekali paste link, dipakai untuk semua menu di bawah.</p>
+  </header>
+
+  <div class="config">
+    <input id="sheetLink" placeholder="Paste link Google Sheets kamu di sini" />
+    <button id="loadBtn">Muat data</button>
+  </div>
+  <p class="setup-hint">Sekali saja: pastikan sharing sheet-nya <strong>Anyone with the link → Viewer</strong> (tombol Share, pojok kanan atas spreadsheet). Link otomatis tersimpan di URL halaman ini setelah dimuat — bookmark, tidak perlu paste ulang.</p>
+
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="hasil">Hasil & Bio</button>
+    <button class="tab-btn" data-tab="analisa">Analisa Pola Konten</button>
+  </nav>
+
+  <!-- ===================== TAB 1: Hasil & Bio ===================== -->
+  <section class="tab-panel active" id="panel-hasil">
+    <div class="roast" id="roastBox" style="display:none;">
+      <div class="roast-head"><span>Progres antrean keyword</span><span id="roastPct">0%</span></div>
+      <div class="track"><div class="fill" id="fill"></div></div>
+      <div class="ticks"><span>Mulai</span><span>25%</span><span>50%</span><span>75%</span><span>Selesai</span></div>
+    </div>
+
+    <div class="stats" id="stats" style="display:none;">
+      <div class="stat"><div class="n" id="statRows">0</div><div class="l">Baris hasil</div></div>
+      <div class="stat"><div class="n" id="statKw">0</div><div class="l">Keyword tercakup</div></div>
+      <div class="stat"><div class="n" id="statEmpty">0</div><div class="l">Deskripsi kosong</div></div>
+      <div class="stat"><div class="n" id="statIg">0</div><div class="l">Handle IG unik</div></div>
+    </div>
+
+    <div id="hasilContent" class="loading">Paste link spreadsheet di atas, lalu klik "Muat data".</div>
+  </section>
+
+  <!-- ===================== TAB 2: Analisa Pola Konten ===================== -->
+  <section class="tab-panel" id="panel-analisa">
+    <div class="callout">
+      <span class="label">Yang TIDAK ada di sini</span>
+      "Follower baru gara-gara posting tertentu" sengaja tidak dibuat — bukan lupa, tapi memang <strong>tidak bisa dihitung</strong> dari data yang ada. Bio Scraper cuma mengambil follower count SEKALI per akun (snapshot, bukan riwayat dari waktu ke waktu). Untuk itu perlu scraping ulang akun yang sama secara berkala dan melacak perubahannya — fitur terpisah yang lebih besar, belum dibangun. Bilang kalau mau dibangun.
+    </div>
+    <div id="analisaContent" class="loading">Data akan muncul di sini otomatis setelah "Muat data" di atas diklik.</div>
+  </section>
+
+  <footer>
+    Menjalankan scraping (keyword, bio, klasifikasi) dilakukan dari tab <strong>Actions</strong> di GitHub repo — halaman ini cuma untuk melihat datanya.
+  </footer>
+</div>
+
+<script>
+const qs = new URLSearchParams(location.search);
+const sheetInput = document.getElementById('sheetLink');
+if (qs.get('sheet')) sheetInput.value = qs.get('sheet');
+
+function extractSpreadsheetId(input){
+  if (!input) return '';
+  const trimmed = input.trim();
+  const match = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  return match ? match[1] : trimmed;
+}
+
+function sheetCsvUrl(spreadsheetId, sheetName){
+  return `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
+}
+
+function setUrlParams(spreadsheetId){
+  const p = new URLSearchParams();
+  if (spreadsheetId) p.set('sheet', spreadsheetId);
+  history.replaceState(null, '', p.toString() ? '?' + p.toString() : location.pathname);
+}
+
+function fetchCsv(url){
+  return new Promise((resolve, reject) => {
+    Papa.parse(url, { download: true, header: true, skipEmptyLines: true, complete: r => resolve(r.data), error: reject });
+  });
+}
+
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* ---------------- Tab switching ---------------- */
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
+  });
+});
+
+/* ---------------- Shared load ---------------- */
+let cachedSpreadsheetId = null;
+let cachedHasilRows = null;
+
+async function loadAll(){
+  const spreadsheetId = extractSpreadsheetId(sheetInput.value);
+  if (!spreadsheetId){
+    document.getElementById('hasilContent').innerHTML = 'Paste link spreadsheet dulu di kotak atas.';
+    return;
+  }
+  setUrlParams(spreadsheetId);
+  cachedSpreadsheetId = spreadsheetId;
+
+  document.getElementById('hasilContent').className = 'loading';
+  document.getElementById('hasilContent').textContent = 'Memuat data...';
+
+  try {
+    cachedHasilRows = await fetchCsv(sheetCsvUrl(spreadsheetId, 'Hasil'));
+  } catch (err){
+    document.getElementById('hasilContent').className = 'empty-state';
+    document.getElementById('hasilContent').textContent = 'Gagal memuat sheet "Hasil". Cek: (1) link benar, (2) sharing "Anyone with the link -- Viewer", (3) nama tab persis "Hasil".';
+    return;
+  }
+
+  let bioMap = new Map();
+  try {
+    const bioRows = await fetchCsv(sheetCsvUrl(spreadsheetId, 'Bio'));
+    bioRows.forEach(b => { if (b['Instagram Handle']) bioMap.set(b['Instagram Handle'], b); });
+  } catch(e){ /* Bio tab may not exist yet */ }
+
+  renderHasil(cachedHasilRows, bioMap);
+
+  try {
+    const kwRows = await fetchCsv(sheetCsvUrl(spreadsheetId, 'Keyword'));
+    renderRoast(cachedHasilRows, kwRows.length);
+  } catch(e){ /* fine, roast bar just won't show */ }
+
+  loadAnalisa(spreadsheetId, cachedHasilRows);
+}
+
+/* ---------------- Tab 1: Hasil & Bio ---------------- */
+function renderRoast(rows, totalKeywords){
+  const uniqueKw = new Set(rows.map(r => r['Account/Keyword']).filter(Boolean));
+  const pct = totalKeywords > 0 ? Math.min(100, Math.round((uniqueKw.size / totalKeywords) * 100)) : 0;
+  document.getElementById('roastBox').style.display = 'block';
+  document.getElementById('fill').style.width = pct + '%';
+  document.getElementById('roastPct').textContent = pct + '% (' + uniqueKw.size + ' / ' + totalKeywords + ' keyword)';
+}
+
+function bioLineFor(handle, bioMap){
+  if (!handle || !bioMap || !bioMap.has(handle)) return '';
+  const b = bioMap.get(handle);
+  const status = b['Status'] || '';
+  if (status === 'OK' && b['Bio'] && b['Bio'].trim()){
+    return `<div class="bio"><span class="label">Bio</span>${escapeHtml(b['Bio'])}</div>`;
+  }
+  if (status){
+    return `<div class="bio status-only"><span class="label">Bio</span>${escapeHtml(status)}</div>`;
+  }
+  return '';
+}
+
+function renderHasil(rows, bioMap){
+  const content = document.getElementById('hasilContent');
+  const validRows = rows.filter(r => r['Judul'] || r['URL']);
+
+  if (validRows.length === 0){
+    content.className = 'empty-state';
+    content.textContent = 'Belum ada hasil di sheet "Hasil". Jalankan workflow di tab Actions dulu.';
+    document.getElementById('stats').style.display = 'none';
+    return;
+  }
+
+  const uniqueKw = new Set(validRows.map(r => r['Account/Keyword']).filter(Boolean));
+  const uniqueIg = new Set(validRows.map(r => r['Instagram Handle']).filter(Boolean));
+  const emptyDesc = validRows.filter(r => !r['Deskripsi'] || !r['Deskripsi'].trim()).length;
+
+  document.getElementById('stats').style.display = 'grid';
+  document.getElementById('statRows').textContent = validRows.length;
+  document.getElementById('statKw').textContent = uniqueKw.size;
+  document.getElementById('statEmpty').textContent = emptyDesc;
+  document.getElementById('statIg').textContent = uniqueIg.size;
+
+  const latest = validRows.slice(-40).reverse();
+  content.className = 'results';
+  content.innerHTML = latest.map((r, i) => `
+    <div class="card" style="animation-delay:${Math.min(i*20,300)}ms">
+      <div class="card-top">
+        <a class="title" href="${escapeHtml(r['URL']||'#')}" target="_blank" rel="noopener">${escapeHtml(r['Judul']||r['URL']||'(tanpa judul)')}</a>
+        ${r['Instagram Handle'] ? `<span class="handle">${escapeHtml(r['Instagram Handle'])}</span>` : ''}
+      </div>
+      <div class="kw">${escapeHtml(r['Account/Keyword']||'-')}</div>
+      <div class="desc ${!r['Deskripsi'] || !r['Deskripsi'].trim() ? 'empty' : ''}">
+        ${r['Deskripsi'] && r['Deskripsi'].trim() ? escapeHtml(r['Deskripsi']) : 'Deskripsi kosong'}
+      </div>
+      ${bioLineFor(r['Instagram Handle'], bioMap)}
+    </div>
+  `).join('');
+}
+
+/* ---------------- Tab 2: Analisa Pola Konten ---------------- */
+const AREA_PATTERNS = [
+  ['Tangerang Selatan', [/tangerang selatan/i, /tangsel/i, /\bbsd\b/i, /serpong/i, /ciputat/i, /pamulang/i, /bintaro/i, /alam sutera/i]],
+  ['Bogor', [/\bbogor\b/i, /cibinong/i, /sentul/i, /\bciawi\b/i]],
+  ['Depok', [/\bdepok\b/i, /margonda/i, /\bcinere\b/i, /sawangan/i]],
+  ['Jakarta', [/\bjakarta\b/i]],
+  ['Tangerang', [/\btangerang\b(?! selatan)/i, /cikupa/i, /gading serpong/i, /karawaci/i]],
+];
+const AREA_ORDER = ['Jakarta', 'Bogor', 'Depok', 'Tangerang', 'Tangerang Selatan', 'Others'];
+const MEDIA_TYPES = ['Foto', 'Video', 'Reel', 'Carousel'];
+
+function classifyArea(keyword){
+  if (!keyword) return 'Others';
+  for (const [area, patterns] of AREA_PATTERNS){
+    if (patterns.some(p => p.test(keyword))) return area;
+  }
+  return 'Others';
+}
+
+function toNum(v){
+  if (v === undefined || v === null) return null;
+  const s = String(v).trim();
+  if (!s || s.toLowerCase().includes('disembunyikan') || s.toLowerCase() === 'n-a') return null;
+  const n = Number(s.replace(/[.,](?=\d{3}\b)/g, '').replace(',', '.'));
+  return Number.isFinite(n) ? n : null;
+}
+
+function avg(nums){
+  const valid = nums.filter(n => n !== null);
+  if (valid.length === 0) return null;
+  return valid.reduce((a,b) => a+b, 0) / valid.length;
+}
+
+function fmt(n){
+  if (n === null || n === undefined) return '–';
+  return Math.round(n).toLocaleString('id-ID');
+}
+
+async function loadAnalisa(spreadsheetId, hasilRows){
+  const content = document.getElementById('analisaContent');
+  content.className = 'loading';
+  content.textContent = 'Memuat & menganalisa...';
+
+  let postsRows;
+  try {
+    postsRows = await fetchCsv(sheetCsvUrl(spreadsheetId, 'Posts'));
+  } catch (err){
+    content.className = 'empty-state';
+    content.textContent = 'Belum ada tab "Posts" di spreadsheet ini -- jalankan Bio Scraper dulu di tab Actions.';
+    return;
+  }
+
+  const validPosts = postsRows.filter(r => r['Account ID'] && r['Tipe Media']);
+  if (validPosts.length < 5){
+    content.className = 'empty-state';
+    content.textContent = `Baru ada ${validPosts.length} baris di sheet "Posts" -- belum cukup untuk pola yang bermakna. Jalankan Bio Scraper, lalu klik "Muat data" lagi.`;
+    return;
+  }
+
+  const areaVotes = {};
+  for (const r of hasilRows){
+    const aid = r['Account ID'];
+    if (!aid) continue;
+    const area = classifyArea(r['Account/Keyword'] || '');
+    areaVotes[aid] = areaVotes[aid] || {};
+    areaVotes[aid][area] = (areaVotes[aid][area] || 0) + 1;
+  }
+  const accountArea = {};
+  for (const aid in areaVotes){
+    accountArea[aid] = Object.entries(areaVotes[aid]).sort((a,b) => b[1]-a[1])[0][0];
+  }
+
+  const posts = validPosts.map(r => ({
+    accountId: r['Account ID'],
+    handle: r['Instagram Handle'],
+    area: accountArea[r['Account ID']] || 'Others',
+    mediaType: MEDIA_TYPES.includes(r['Tipe Media']) ? r['Tipe Media'] : 'Foto',
+    hook: r['Hook (Baris Pertama)'] || '(tanpa caption)',
+    url: r['URL Post'] || '',
+    likes: toNum(r['Likes']),
+    comments: toNum(r['Comments']),
+    views: toNum(r['Views']),
+  }));
+
+  const uniqueAccounts = new Set(posts.map(p => p.accountId)).size;
+  const withLikes = posts.filter(p => p.likes !== null).length;
+
+  content.className = '';
+  content.innerHTML = `
+    <div class="stats">
+      <div class="stat"><div class="n">${posts.length}</div><div class="l">Total postingan</div></div>
+      <div class="stat"><div class="n">${uniqueAccounts}</div><div class="l">Akun tercakup</div></div>
+      <div class="stat"><div class="n">${withLikes}</div><div class="l">Likes terlihat</div></div>
+      <div class="stat"><div class="n">${posts.length - withLikes}</div><div class="l">Likes disembunyikan</div></div>
+    </div>
+    <div id="matrixSection"></div>
+    <div id="lbSection"></div>
+  `;
+
+  renderMatrix(posts);
+  renderLeaderboard(posts);
+}
+
+function renderMatrix(posts){
+  const cells = {};
+  for (const area of AREA_ORDER){
+    cells[area] = {};
+    for (const type of MEDIA_TYPES) cells[area][type] = [];
+  }
+  for (const p of posts){
+    if (!cells[p.area]) { cells[p.area] = {}; for (const t of MEDIA_TYPES) cells[p.area][t] = []; }
+    cells[p.area][p.mediaType].push(p);
+  }
+
+  let rowsHtml = '';
+  for (const area of AREA_ORDER){
+    const areaPosts = MEDIA_TYPES.flatMap(t => cells[area][t] || []);
+    if (areaPosts.length === 0) continue;
+    rowsHtml += `<tr><td class="area-name" colspan="5">${area} <span class="muted">(${areaPosts.length} postingan)</span></td></tr>`;
+    for (const type of MEDIA_TYPES){
+      const list = cells[area][type] || [];
+      if (list.length === 0) continue;
+      rowsHtml += `
+        <tr>
+          <td>&nbsp;&nbsp;${type}</td>
+          <td class="num">${list.length}</td>
+          <td class="num">${fmt(avg(list.map(p => p.likes)))}</td>
+          <td class="num">${fmt(avg(list.map(p => p.comments)))}</td>
+          <td class="num">${avg(list.map(p => p.views)) !== null ? fmt(avg(list.map(p => p.views))) : '–'}</td>
+        </tr>`;
+    }
+  }
+
+  const overallByType = MEDIA_TYPES.map(type => {
+    const list = posts.filter(p => p.mediaType === type);
+    return { type, count: list.length, avgLikes: avg(list.map(p=>p.likes)), avgComments: avg(list.map(p=>p.comments)) };
+  }).filter(x => x.count > 0).sort((a,b) => (b.avgLikes||0) - (a.avgLikes||0));
+
+  const overallHtml = overallByType.map(x => `
+    <tr>
+      <td>${x.type}</td>
+      <td class="num">${x.count}</td>
+      <td class="num">${fmt(x.avgLikes)}</td>
+      <td class="num">${fmt(x.avgComments)}</td>
+    </tr>`).join('');
+
+  document.getElementById('matrixSection').innerHTML = `
+    <h2>Pola keseluruhan: tipe media mana yang paling engaging</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Tipe Media</th><th>Jumlah</th><th>Rata² Likes</th><th>Rata² Comments</th></tr></thead>
+        <tbody>${overallHtml}</tbody>
+      </table>
+    </div>
+    <h2>Matriks per Area</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Area / Tipe Media</th><th>Jumlah</th><th>Rata² Likes</th><th>Rata² Comments</th><th>Rata² Views</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>`;
+}
+
+function renderLeaderboard(posts){
+  const top = [...posts].filter(p => p.likes !== null).sort((a,b) => b.likes - a.likes).slice(0, 10);
+  const html = top.map((p, i) => `
+    <div class="lb-item">
+      <div class="lb-rank">${i+1}</div>
+      <div class="lb-body">
+        <div class="lb-hook">${escapeHtml(p.hook)}</div>
+        <div class="lb-meta">${escapeHtml(p.handle)} · ${p.mediaType} · ${p.area}</div>
+      </div>
+      <div class="lb-metric">❤ ${fmt(p.likes)}${p.comments !== null ? ' · 💬 ' + fmt(p.comments) : ''}</div>
+    </div>`).join('');
+
+  document.getElementById('lbSection').innerHTML = `
+    <h2>Top 10 postingan dengan likes terbanyak (bahan analisa hook)</h2>
+    <div class="leaderboard">${html || '<div class="muted">Belum ada data likes yang terlihat.</div>'}</div>`;
+}
+
+document.getElementById('loadBtn').addEventListener('click', loadAll);
+if (sheetInput.value) loadAll();
+</script>
+</body>
+</html>
