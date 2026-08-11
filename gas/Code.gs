@@ -1,10 +1,13 @@
 /**
  * Roastery IG Keyword Research - Google Apps Script Web App
  * -----------------------------------------------------------
- * ONE spreadsheet, ONE deployment URL, THREE sheet tabs:
+ * ONE spreadsheet, ONE deployment URL, FOUR sheet tabs:
  *   - "Keyword" : input list of search phrases
  *   - "Hasil"   : organic search results (incl. Instagram handles found)
  *   - "Bio"     : Instagram profile bio data, one row per unique handle
+ *   - "Posts"   : the ~12 most recent posts per account (caption, hook,
+ *                 hashtags, media type, likes/comments/views), extracted
+ *                 from the SAME response used for Bio -- no extra request.
  *
  * doGet:
  *   ?action=keywordQueue (default) -> unprocessed rows from "Keyword"
@@ -14,6 +17,7 @@
  * doPost body:
  *   { ...,              "items": [...] }              -> appends to "Hasil" (default)
  *   { "type": "bio",    "items": [...] }               -> appends to "Bio"
+ *   { "type": "posts",  "items": [...] }               -> appends to "Posts"
  *
  * Auth: optional shared-secret token (Script Property SHARED_TOKEN), see
  * isAuthorized_(). Skipped entirely if the property isn't set.
@@ -21,6 +25,7 @@
 
 var IG_PLACEHOLDER_HANDLES = ["@reel", "@p", "@instagram", ""];
 var BIO_HEADERS = ["No", "Account ID", "Instagram Handle", "Nama Lengkap", "Bio", "Followers", "Following", "Posts", "Website", "Private", "Verified", "Status"];
+var POSTS_HEADERS = ["No", "Account ID", "Instagram Handle", "Tipe Media", "URL Post", "Hook (Baris Pertama)", "Caption Lengkap", "Hashtag", "Tanggal Post", "Likes", "Comments", "Views"];
 
 function isAuthorized_(params) {
   var expected = PropertiesService.getScriptProperties().getProperty('SHARED_TOKEN');
@@ -61,6 +66,17 @@ function getOrCreateBioSheet_(ss) {
   return sheet;
 }
 
+// Same auto-create pattern for "Posts".
+function getOrCreatePostsSheet_(ss) {
+  var sheet = ss.getSheetByName("Posts");
+  if (!sheet) {
+    sheet = ss.insertSheet("Posts");
+    sheet.getRange(1, 1, 1, POSTS_HEADERS.length).setValues([POSTS_HEADERS]);
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
 // "Hasil" already has a fixed 11-column layout the user set up manually, so
 // Account ID is added as a new column L at the end (not inserted in the
 // middle) to avoid disturbing existing data/columns. Header is added
@@ -77,6 +93,9 @@ function doGet(e) {
     var action = (e && e.parameter && e.parameter.action) || 'keywordQueue';
     if (action === 'bioQueue') {
       return bioQueueResponse_();
+    }
+    if (action === 'backfillAccountIds') {
+      return backfillAccountIdsResponse_();
     }
     return keywordQueueResponse_();
   } catch (err) {
@@ -120,6 +139,54 @@ function keywordQueueResponse_() {
   }
 
   return ContentService.createTextOutput(JSON.stringify(queueList))
+                       .setMimeType(ContentService.MimeType.JSON);
+}
+
+// One-time (idempotent, safe to re-run) fix-up for rows written before the
+// Account ID feature existed. Visit this URL directly in a browser --
+// GAS_WEB_APP_URL + "?action=backfillAccountIds" -- no Python/GitHub Actions
+// run needed. Uses batched range read/write (not per-cell) so it stays fast
+// even at thousands of rows.
+function backfillAccountIdsResponse_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheetRes = ss.getSheetByName("Hasil");
+  var sheetBio = ss.getSheetByName("Bio");
+  var updated = { hasil: 0, bio: 0 };
+
+  if (sheetRes && sheetRes.getLastRow() > 1) {
+    ensureHasilAccountIdHeader_(sheetRes);
+    var numRows = sheetRes.getLastRow() - 1;
+    var handles = sheetRes.getRange(2, 11, numRows, 1).getValues(); // col K
+    var ids = sheetRes.getRange(2, 12, numRows, 1).getValues();     // col L
+    var newIds = ids.map(function (row, i) {
+      var handle = handles[i][0];
+      var currentId = row[0];
+      if (isRealHandle_(handle) && !currentId) {
+        updated.hasil++;
+        return [computeAccountId_(handle)];
+      }
+      return [currentId];
+    });
+    sheetRes.getRange(2, 12, numRows, 1).setValues(newIds);
+  }
+
+  if (sheetBio && sheetBio.getLastRow() > 1) {
+    var numRowsBio = sheetBio.getLastRow() - 1;
+    var handlesBio = sheetBio.getRange(2, 3, numRowsBio, 1).getValues(); // col C
+    var idsBio = sheetBio.getRange(2, 2, numRowsBio, 1).getValues();     // col B
+    var newIdsBio = idsBio.map(function (row, i) {
+      var handle = handlesBio[i][0];
+      var currentId = row[0];
+      if (handle && !currentId) {
+        updated.bio++;
+        return [computeAccountId_(handle)];
+      }
+      return [currentId];
+    });
+    sheetBio.getRange(2, 2, numRowsBio, 1).setValues(newIdsBio);
+  }
+
+  return ContentService.createTextOutput(JSON.stringify({status: "success", updated: updated}))
                        .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -180,6 +247,9 @@ function doPost(e) {
 
     if (params.type === 'bio') {
       return appendBioRows_(params);
+    }
+    if (params.type === 'posts') {
+      return appendPostRows_(params);
     }
     return appendHasilRows_(params);
   } catch (err) {
@@ -270,6 +340,48 @@ function appendBioRows_(params) {
   if (rowsToAppend.length > 0) {
     sheetBio.getRange(
       sheetBio.getLastRow() + 1,
+      1,
+      rowsToAppend.length,
+      rowsToAppend[0].length
+    ).setValues(rowsToAppend);
+  }
+
+  return ContentService.createTextOutput(JSON.stringify({status: "success", written: rowsToAppend.length}))
+                       .setMimeType(ContentService.MimeType.JSON);
+}
+
+function appendPostRows_(params) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheetPosts = getOrCreatePostsSheet_(ss);
+
+  var items = Array.isArray(params.items) ? params.items : [params];
+
+  var lastRow = sheetPosts.getLastRow();
+  var nextNo = lastRow >= 1 ? lastRow : 1;
+
+  var rowsToAppend = items.map(function (p) {
+    var handle = p.instagramHandle || "";
+    var out = [
+      nextNo,
+      computeAccountId_(handle),
+      handle,
+      p.mediaType || "",
+      p.postUrl || "",
+      p.hook || "",
+      p.caption || "",
+      p.hashtags || "",
+      p.postedAt || "",
+      p.likes !== undefined && p.likes !== null ? p.likes : "",
+      p.comments !== undefined && p.comments !== null ? p.comments : "",
+      p.views !== undefined && p.views !== null ? p.views : ""
+    ];
+    nextNo += 1;
+    return out;
+  });
+
+  if (rowsToAppend.length > 0) {
+    sheetPosts.getRange(
+      sheetPosts.getLastRow() + 1,
       1,
       rowsToAppend.length,
       rowsToAppend[0].length
