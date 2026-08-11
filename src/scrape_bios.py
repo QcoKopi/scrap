@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 """
-Instagram Bio Scraper
-----------------------
+Instagram Bio + Recent Posts Scraper
+--------------------------------------
 Reads the list of unique, real Instagram handles already found in the
 "Hasil" sheet (via GAS `?action=bioQueue`, which also excludes handles
-that already have a Bio row) and fetches profile bio data for each,
-writing results to the "Bio" sheet tab.
+that already have a Bio row) and fetches, per handle:
+  1. Profile bio data -> "Bio" sheet tab
+  2. The ~12 most recent posts (caption, hook, hashtags, media type,
+     likes/comments/views) -> "Posts" sheet tab
+
+Both come from the SAME Oxylabs request per handle -- Instagram's
+web_profile_info response embeds the account's recent posts under
+`edge_owner_to_timeline_media`, so extracting posts costs no extra
+request, no extra rate-limit usage, and no extra reliability risk beyond
+what bio scraping already has.
 
 HOW IT WORKS / IMPORTANT CAVEATS
 ---------------------------------
@@ -25,8 +33,18 @@ project), NOT an official/guaranteed API. Instagram can change or block
 it at any time without notice, especially at volume, for private
 accounts, or if Instagram serves a login wall instead of data.
 
-Because of that, this script NEVER guesses or fabricates a bio. Every
-handle gets an explicit "status" written to the sheet:
+SCOPE LIMIT (intentional): this only extracts the ~12 most recent posts
+that are already embedded in the profile response. Going deeper requires
+Instagram's GraphQL pagination endpoint, which needs a `doc_id` parameter
+that Instagram rotates roughly every 2-4 weeks specifically to break
+scrapers -- deliberately NOT implemented here because it would silently
+stop working on an unpredictable schedule. If you need full post history
+instead of the recent-12 snapshot, that's a materially bigger, higher-
+maintenance undertaking (realistically: a paid managed Instagram scraping
+API) -- ask before assuming this script covers it.
+
+Because of that, this script NEVER guesses or fabricates a bio or a post.
+Every handle gets an explicit "status" written to the Bio sheet:
   - "OK"                          -> biography (possibly empty string
                                       if the account genuinely has none)
   - "Akun privat"                 -> profile exists but is private
@@ -35,9 +53,15 @@ handle gets an explicit "status" written to the sheet:
                                       the request, etc.)
   - "HTTP <code>"                 -> Oxylabs/network-level failure
 
+Likes/comments that Instagram hides (increasingly common) are written as
+"Disembunyikan/N-A", never as 0 -- 0 would misleadingly look like real data.
+
 This makes gaps visible instead of silently blank, unlike the original
 Deskripsi bug.
 """
+
+import re
+from datetime import datetime, timezone
 
 import json
 import os
@@ -83,7 +107,13 @@ def fetch_bio_queue(session: requests.Session) -> List[Dict[str, Any]]:
     print("Mengambil antrean handle Instagram dari Google Sheets...")
     sep = "&" if "?" in GAS_WEB_APP_URL else "?"
     url = f"{GAS_WEB_APP_URL}{sep}action=bioQueue"
-    response = session.get(url, timeout=15)
+    try:
+        response = session.get(url, timeout=30)
+    except requests.RequestException as exc:
+        raise RuntimeError(
+            f"Gagal terhubung ke GAS (gangguan jaringan): {exc}\n"
+            "Ini biasanya sementara -- coba jalankan workflow lagi."
+        ) from exc
     if response.status_code != 200:
         raise RuntimeError(f"Gagal terhubung ke GAS. Status: {response.status_code}")
     try:
@@ -98,8 +128,12 @@ def fetch_bio_queue(session: requests.Session) -> List[Dict[str, Any]]:
     return queue_data
 
 
-def fetch_profile(session: requests.Session, username: str) -> Dict[str, Any]:
-    """Returns a dict with either parsed profile data or a "status" explaining failure.
+def fetch_profile(session: requests.Session, username: str) -> tuple:
+    """Returns (bio_data: dict, raw_user: dict | None).
+
+    raw_user is Instagram's full user JSON on success (used afterwards to
+    also extract recent posts, at no extra request cost), or None on any
+    failure -- bio_data["status"] explains why.
 
     Never raises for expected failure modes (blocked/private/not found) --
     those are reported back as data, not exceptions, so one bad handle
@@ -119,19 +153,19 @@ def fetch_profile(session: requests.Session, username: str) -> Dict[str, Any]:
             OXYLABS_URL, auth=(OXYLABS_USERNAME, OXYLABS_PASSWORD), json=payload, timeout=30
         )
     except requests.RequestException as exc:
-        return {"status": f"Error jaringan: {exc}"}
+        return {"status": f"Error jaringan: {exc}"}, None
 
     if resp.status_code != 200:
-        return {"status": f"HTTP {resp.status_code}"}
+        return {"status": f"HTTP {resp.status_code}"}, None
 
     try:
         oxy_data = resp.json()
     except json.JSONDecodeError:
-        return {"status": "Gagal parse respon Oxylabs"}
+        return {"status": "Gagal parse respon Oxylabs"}, None
 
     results = oxy_data.get("results", [])
     if not results:
-        return {"status": "Tidak ditemukan / diblokir (respon kosong)"}
+        return {"status": "Tidak ditemukan / diblokir (respon kosong)"}, None
 
     content = results[0].get("content")
 
@@ -146,17 +180,17 @@ def fetch_profile(session: requests.Session, username: str) -> Dict[str, Any]:
         try:
             ig_data = json.loads(content)
         except json.JSONDecodeError:
-            return {"status": "Tidak ditemukan / diblokir (bukan JSON, kemungkinan login wall)"}
+            return {"status": "Tidak ditemukan / diblokir (bukan JSON, kemungkinan login wall)"}, None
     else:
-        return {"status": "Tidak ditemukan / diblokir (format respon tak dikenal)"}
+        return {"status": "Tidak ditemukan / diblokir (format respon tak dikenal)"}, None
 
     user = (ig_data or {}).get("data", {}).get("user")
     if not user:
-        return {"status": "Tidak ditemukan / diblokir (akun tidak ada / dihapus)"}
+        return {"status": "Tidak ditemukan / diblokir (akun tidak ada / dihapus)"}, None
 
     is_private = bool(user.get("is_private"))
 
-    return {
+    bio_data = {
         "namaLengkap": user.get("full_name", ""),
         "bio": user.get("biography", ""),
         "followers": (user.get("edge_followed_by") or {}).get("count", ""),
@@ -167,6 +201,89 @@ def fetch_profile(session: requests.Session, username: str) -> Dict[str, Any]:
         "isVerified": bool(user.get("is_verified")),
         "status": "Akun privat (bio mungkin tidak lengkap)" if is_private else "OK",
     }
+    return bio_data, user
+
+
+def _extract_caption(node: Dict[str, Any]) -> str:
+    edges = ((node.get("edge_media_to_caption") or {}).get("edges")) or []
+    if edges:
+        return edges[0].get("node", {}).get("text", "") or ""
+    return ""
+
+
+def _media_type(node: Dict[str, Any]) -> str:
+    if node.get("product_type") == "clips":
+        return "Reel"
+    if node.get("__typename") == "GraphSidecar" or node.get("edge_sidecar_to_children"):
+        return "Carousel"
+    if node.get("is_video"):
+        return "Video"
+    return "Foto"
+
+
+def _engagement_count(node: Dict[str, Any], keys: List[str]) -> Optional[int]:
+    """Returns None (not 0) when Instagram doesn't expose the count at all,
+    e.g. an account that has hidden its like counts -- 0 would misleadingly
+    look like a real, verified value of zero.
+    """
+    for key in keys:
+        block = node.get(key)
+        if isinstance(block, dict) and block.get("count") is not None:
+            return block["count"]
+    return None
+
+
+def extract_posts(user: Dict[str, Any], handle: str) -> List[Dict[str, Any]]:
+    """Pulls the recent-posts snapshot already embedded in the profile
+    response (up to ~12 posts). See module docstring for why this doesn't
+    paginate further.
+    """
+    timeline = user.get("edge_owner_to_timeline_media") or {}
+    edges = timeline.get("edges") or []
+
+    posts: List[Dict[str, Any]] = []
+    for edge in edges:
+        node = edge.get("node") or {}
+        shortcode = node.get("shortcode", "")
+        if not shortcode:
+            continue
+
+        media_type = _media_type(node)
+        caption = _extract_caption(node)
+        hook = caption.split("\n")[0][:150] if caption else ""
+        hashtags = ", ".join(re.findall(r"#\w+", caption)) if caption else ""
+
+        posted_at = ""
+        taken_at = node.get("taken_at_timestamp")
+        if taken_at:
+            try:
+                posted_at = datetime.fromtimestamp(int(taken_at), tz=timezone.utc).strftime(
+                    "%Y-%m-%d %H:%M UTC"
+                )
+            except (ValueError, OSError, OverflowError):
+                posted_at = ""
+
+        likes = _engagement_count(node, ["edge_media_preview_like", "edge_liked_by"])
+        comments = _engagement_count(node, ["edge_media_to_comment", "edge_media_to_parent_comment"])
+        views = node.get("video_view_count", node.get("video_play_count"))
+
+        url_path = "reel" if media_type == "Reel" else "p"
+
+        posts.append(
+            {
+                "instagramHandle": handle,
+                "mediaType": media_type,
+                "postUrl": f"https://www.instagram.com/{url_path}/{shortcode}/",
+                "hook": hook,
+                "caption": caption,
+                "hashtags": hashtags,
+                "postedAt": posted_at,
+                "likes": likes if likes is not None else "Disembunyikan/N-A",
+                "comments": comments if comments is not None else "Disembunyikan/N-A",
+                "views": views if views is not None else "",
+            }
+        )
+    return posts
 
 
 def send_bio_result(session: requests.Session, handle: str, data: Dict[str, Any]) -> bool:
@@ -174,7 +291,11 @@ def send_bio_result(session: requests.Session, handle: str, data: Dict[str, Any]
     if GAS_SHARED_TOKEN:
         payload["token"] = GAS_SHARED_TOKEN
 
-    resp = session.post(GAS_WEB_APP_URL, json=payload, timeout=20)
+    try:
+        resp = session.post(GAS_WEB_APP_URL, json=payload, timeout=20)
+    except requests.RequestException as exc:
+        print(f"  -> [GANGGUAN JARINGAN KE SHEET]: {exc}")
+        return False
     if resp.status_code != 200:
         print(f"  -> [GAGAL KIRIM KE SHEET] Status Code: {resp.status_code}")
         return False
@@ -185,6 +306,32 @@ def send_bio_result(session: requests.Session, handle: str, data: Dict[str, Any]
         return False
     if result.get("status") != "success":
         print(f"  -> [GAS MENOLAK]: {result}")
+        return False
+    return True
+
+
+def send_post_results(session: requests.Session, posts: List[Dict[str, Any]]) -> bool:
+    if not posts:
+        return True
+    payload: Dict[str, Any] = {"type": "posts", "items": posts}
+    if GAS_SHARED_TOKEN:
+        payload["token"] = GAS_SHARED_TOKEN
+
+    try:
+        resp = session.post(GAS_WEB_APP_URL, json=payload, timeout=20)
+    except requests.RequestException as exc:
+        print(f"  -> [GANGGUAN JARINGAN KE SHEET - POSTS]: {exc}")
+        return False
+    if resp.status_code != 200:
+        print(f"  -> [GAGAL KIRIM POSTS KE SHEET] Status Code: {resp.status_code}")
+        return False
+    try:
+        result = resp.json()
+    except json.JSONDecodeError:
+        print(f"  -> [GAGAL PARSE RESPON GAS - POSTS]: {resp.text[:200]}")
+        return False
+    if result.get("status") != "success":
+        print(f"  -> [GAS MENOLAK - POSTS]: {result}")
         return False
     return True
 
@@ -223,6 +370,7 @@ def main() -> None:
     )
 
     ok, private, failed = 0, 0, 0
+    total_posts = 0
 
     for item in batch:
         handle = item.get("handle", "")
@@ -231,7 +379,7 @@ def main() -> None:
             continue
 
         print(f"\n[PROSES] {handle}...")
-        data = fetch_profile(session, username)
+        data, raw_user = fetch_profile(session, username)
         status = data.get("status", "")
 
         if status == "OK":
@@ -245,11 +393,22 @@ def main() -> None:
             print(f"  -> [GAGAL] {status}")
 
         send_bio_result(session, handle, data)
+
+        if raw_user is not None:
+            posts = extract_posts(raw_user, handle)
+            if posts:
+                send_post_results(session, posts)
+                total_posts += len(posts)
+                print(f"  -> [POSTS] {len(posts)} postingan terbaru diekstrak & dikirim.")
+            else:
+                print("  -> [POSTS] Tidak ada postingan ditemukan di respon (akun kosong/privat).")
+
         time.sleep(REQUEST_DELAY_SECONDS)
 
     remaining = total_in_queue - len(batch)
     print(
         f"\nSelesai. OK: {ok} | Privat: {private} | Gagal: {failed} | "
+        f"Total postingan terekam: {total_posts} | "
         f"Sisa di antrean setelah run ini: {remaining}"
     )
     if remaining > 0:
