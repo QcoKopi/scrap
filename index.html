@@ -6,7 +6,6 @@
 <title>Roastery IG Research — Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <style>
   :root{
     --bg:#1c140f; --surface:#261b14; --surface-2:#33251a; --line:#4a3626;
@@ -103,14 +102,14 @@
   <header>
     <p class="eyebrow">Roastery · Riset Instagram Kompetitor</p>
     <h1>Dashboard</h1>
-    <p class="sub">Data langsung dari Google Sheet kamu — sekali paste link, dipakai untuk semua menu di bawah.</p>
+    <p class="sub">Data langsung dari GAS Web App URL kamu — sekali paste, dipakai untuk semua menu di bawah. Spreadsheet tetap privat, tidak perlu di-share.</p>
   </header>
 
   <div class="config">
-    <input id="sheetLink" placeholder="Paste link Google Sheets kamu di sini" />
+    <input id="sheetLink" placeholder="Paste GAS Web App URL kamu (yang sama dengan secret GAS_WEB_APP_URL)" />
     <button id="loadBtn">Muat data</button>
   </div>
-  <p class="setup-hint">Sekali saja: pastikan sharing sheet-nya <strong>Anyone with the link → Viewer</strong> (tombol Share, pojok kanan atas spreadsheet). Link otomatis tersimpan di URL halaman ini setelah dimuat — bookmark, tidak perlu paste ulang.</p>
+  <p class="setup-hint">Tidak perlu ubah sharing apa pun — spreadsheet boleh tetap privat. URL ini yang sama persis dengan secret <code>GAS_WEB_APP_URL</code> di GitHub. Tersimpan otomatis di URL halaman ini setelah dimuat — bookmark, tidak perlu paste ulang.</p>
 
   <nav class="tabs">
     <button class="tab-btn active" data-tab="hasil">Hasil & Bio</button>
@@ -152,28 +151,66 @@
 <script>
 const qs = new URLSearchParams(location.search);
 const sheetInput = document.getElementById('sheetLink');
-if (qs.get('sheet')) sheetInput.value = qs.get('sheet');
+if (qs.get('gas')) sheetInput.value = qs.get('gas');
 
-function extractSpreadsheetId(input){
-  if (!input) return '';
-  const trimmed = input.trim();
-  const match = trimmed.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-  return match ? match[1] : trimmed;
+function normalizeGasUrl(input){
+  return (input || '').trim();
 }
 
-function sheetCsvUrl(spreadsheetId, sheetName){
-  return `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
+function sheetJsonpUrl(gasUrl, sheetName, callbackName){
+  const sep = gasUrl.includes('?') ? '&' : '?';
+  return `${gasUrl}${sep}action=exportSheet&name=${encodeURIComponent(sheetName)}&callback=${callbackName}`;
 }
 
-function setUrlParams(spreadsheetId){
+function setUrlParams(gasUrl){
   const p = new URLSearchParams();
-  if (spreadsheetId) p.set('sheet', spreadsheetId);
+  if (gasUrl) p.set('gas', gasUrl);
   history.replaceState(null, '', p.toString() ? '?' + p.toString() : location.pathname);
 }
 
-function fetchCsv(url){
+// JSONP loader -- loads data via a <script> tag instead of fetch()/XHR,
+// which is never subject to CORS at all (script tags have always been
+// allowed to load cross-origin; that's the whole reason JSONP exists).
+// Sidesteps entirely whether Apps Script's response headers cooperate
+// with cross-origin fetch, which is inconsistent enough in practice that
+// it's not worth relying on.
+let jsonpCounter = 0;
+function fetchSheetJson(gasUrl, sheetName){
   return new Promise((resolve, reject) => {
-    Papa.parse(url, { download: true, header: true, skipEmptyLines: true, complete: r => resolve(r.data), error: reject });
+    const callbackName = 'jsonpCb_' + (jsonpCounter++) + '_' + Date.now();
+    const script = document.createElement('script');
+    let settled = false;
+
+    const cleanup = () => {
+      delete window[callbackName];
+      if (script.parentNode) script.parentNode.removeChild(script);
+      clearTimeout(timeoutId);
+    };
+
+    window[callbackName] = (data) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (data && data.error) reject(new Error(data.error));
+      else resolve(data);
+    };
+
+    script.onerror = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error('Gagal memuat data (cek URL GAS benar & sudah di-deploy)'));
+    };
+
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error('Timeout memuat data'));
+    }, 20000);
+
+    script.src = sheetJsonpUrl(gasUrl, sheetName, callbackName);
+    document.head.appendChild(script);
   });
 }
 
@@ -190,43 +227,43 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 });
 
 /* ---------------- Shared load ---------------- */
-let cachedSpreadsheetId = null;
+let cachedGasUrl = null;
 let cachedHasilRows = null;
 
 async function loadAll(){
-  const spreadsheetId = extractSpreadsheetId(sheetInput.value);
-  if (!spreadsheetId){
-    document.getElementById('hasilContent').innerHTML = 'Paste link spreadsheet dulu di kotak atas.';
+  const gasUrl = normalizeGasUrl(sheetInput.value);
+  if (!gasUrl){
+    document.getElementById('hasilContent').innerHTML = 'Paste GAS Web App URL dulu di kotak atas.';
     return;
   }
-  setUrlParams(spreadsheetId);
-  cachedSpreadsheetId = spreadsheetId;
+  setUrlParams(gasUrl);
+  cachedGasUrl = gasUrl;
 
   document.getElementById('hasilContent').className = 'loading';
   document.getElementById('hasilContent').textContent = 'Memuat data...';
 
   try {
-    cachedHasilRows = await fetchCsv(sheetCsvUrl(spreadsheetId, 'Hasil'));
+    cachedHasilRows = await fetchSheetJson(gasUrl, 'Hasil');
   } catch (err){
     document.getElementById('hasilContent').className = 'empty-state';
-    document.getElementById('hasilContent').textContent = 'Gagal memuat sheet "Hasil". Cek: (1) link benar, (2) sharing "Anyone with the link -- Viewer", (3) nama tab persis "Hasil".';
+    document.getElementById('hasilContent').textContent = 'Gagal memuat sheet "Hasil". Cek: (1) URL GAS benar dan sudah di-deploy (2) deployment access-nya "Anyone".';
     return;
   }
 
   let bioMap = new Map();
   try {
-    const bioRows = await fetchCsv(sheetCsvUrl(spreadsheetId, 'Bio'));
+    const bioRows = await fetchSheetJson(gasUrl, 'Bio');
     bioRows.forEach(b => { if (b['Instagram Handle']) bioMap.set(b['Instagram Handle'], b); });
   } catch(e){ /* Bio tab may not exist yet */ }
 
   renderHasil(cachedHasilRows, bioMap);
 
   try {
-    const kwRows = await fetchCsv(sheetCsvUrl(spreadsheetId, 'Keyword'));
+    const kwRows = await fetchSheetJson(gasUrl, 'Keyword');
     renderRoast(cachedHasilRows, kwRows.length);
   } catch(e){ /* fine, roast bar just won't show */ }
 
-  loadAnalisa(spreadsheetId, cachedHasilRows);
+  loadAnalisa(gasUrl, cachedHasilRows);
 }
 
 /* ---------------- Tab 1: Hasil & Bio ---------------- */
@@ -327,14 +364,14 @@ function fmt(n){
   return Math.round(n).toLocaleString('id-ID');
 }
 
-async function loadAnalisa(spreadsheetId, hasilRows){
+async function loadAnalisa(gasUrl, hasilRows){
   const content = document.getElementById('analisaContent');
   content.className = 'loading';
   content.textContent = 'Memuat & menganalisa...';
 
   let postsRows;
   try {
-    postsRows = await fetchCsv(sheetCsvUrl(spreadsheetId, 'Posts'));
+    postsRows = await fetchSheetJson(gasUrl, 'Posts');
   } catch (err){
     content.className = 'empty-state';
     content.textContent = 'Belum ada tab "Posts" di spreadsheet ini -- jalankan Bio Scraper dulu di tab Actions.';
