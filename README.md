@@ -25,13 +25,21 @@ Pulls keywords from a Google Sheet, searches Google (`site:instagram.com <keywor
 
 Filter/sort the `Status` column in `Bio` to see what actually succeeded — don't treat a blank `Bio` cell as "no bio," check `Status` first.
 
-**Setup:** in your spreadsheet, add a new sheet tab named exactly **`Bio`** with this header row (matches what the script writes):
+**Setup:** none needed for the sheet itself — `gas/Code.gs` now auto-creates the **`Bio`** tab (with the correct header row) the first time it's needed, so there's no manual sheet/header setup to get wrong. Just make sure you've redeployed the updated `gas/Code.gs` (step 3 below), then use **Actions → Run IG Bio Scraper → Run workflow**.
 
-```
-No | Instagram Handle | Nama Lengkap | Bio | Followers | Following | Posts | Website | Private | Verified | Status
-```
+**Account ID:** every Instagram handle also gets a stable 8-character `Account ID` (a deterministic hash of the handle — same handle always produces the same ID, computed independently, no lookup table needed), written both in `Hasil` (new column L, auto-added) and `Bio` (new column B). Since one account can appear across many `Hasil` rows, this ID is what you'd use to group/join all of an account's rows together (e.g. in a pivot table or VLOOKUP), rather than matching on the raw handle text.
 
-Then redeploy the updated `gas/Code.gs` (step 3 below) and use **Actions → Run IG Bio Scraper → Run workflow**.
+Rows written *before* this feature existed won't have an ID retroactively (it's only computed at write-time) — to backfill them, open `GAS_WEB_APP_URL + "?action=backfillAccountIds"` directly in a browser once. It's safe to re-run (only fills blanks, never overwrites) and returns a small JSON summary of how many rows it updated.
+
+**Recovering handles from `/p/` and `/reel/` links:** an individual post/reel URL (`instagram.com/p/<shortcode>/`) doesn't contain the poster's username at all — that's an Instagram URL-structure limitation, not something extractable from the link. `src/auto_pipeline.py` now falls back to scanning the post's title/snippet text for an `@mention` when the URL alone doesn't reveal the handle (e.g. "Dari @kopikita.jkt di Jakarta..."). Real-data check across the 2,336-keyword run: about **8.6%** of otherwise-placeholder rows had a recoverable mention this way — a modest but free win, applied automatically on every future run (existing rows aren't retroactively fixed, same reasoning as Account ID above).
+
+## New: recent posts per account (caption, hashtags, engagement)
+
+Every time the Bio Scraper fetches a profile, it also pulls that account's **~12 most recent posts** — media type (Foto/Video/Reel/Carousel), post URL, the first line of the caption ("Hook"), full caption, hashtags, post date, likes, comments, and views (Reels/video) — into an auto-created **`Posts`** sheet. This costs **zero extra requests**: Instagram's profile endpoint already embeds recent posts in the same response used for bio.
+
+**Scope limit, on purpose:** this is a recent-12 snapshot, not full post history. Going further requires Instagram's paginated GraphQL endpoint, which needs a `doc_id` parameter Instagram rotates roughly every 2-4 weeks specifically to break scrapers. I deliberately didn't build that — it would work today and silently stop working on an unpredictable schedule, which is worse than not having it. If you need deep post history (not just the recent snapshot), that's a bigger undertaking — realistically a paid managed Instagram scraping API (e.g. Apify, Bright Data — roughly $1-2 per 1,000 results at the time of writing) rather than something to bolt onto this Oxylabs-based setup. Ask me if/when you want to go there.
+
+**Hidden likes:** Instagram increasingly lets accounts hide their like counts. When that happens, the `Likes` cell shows `Disembunyikan/N-A`, never `0` — a real zero and "hidden" are different things, and showing 0 for hidden data would be misleading in exactly the way the original Deskripsi bug was.
 
 ## Running it — no terminal needed
 
