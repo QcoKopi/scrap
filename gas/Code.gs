@@ -53,6 +53,25 @@ function computeAccountId_(handle) {
   return hex.substring(0, 8).toUpperCase();
 }
 
+// Individual post/reel URLs (instagram.com/p/<shortcode>/) don't contain the
+// poster's username at all -- an Instagram URL-structure limitation, not
+// something fixable from the link alone. This looks for an @mention in the
+// post's title/snippet text instead (e.g. "Dari @kopikita.jkt di Jakarta").
+// Mirrors extract_mention_fallback() in src/auto_pipeline.py -- keep both in
+// sync if this regex ever changes.
+var IG_MENTION_RE = /@[\w.]{2,30}/g;
+
+function extractMentionFallback_(text) {
+  if (!text) return "";
+  var matches = text.match(IG_MENTION_RE);
+  if (!matches) return "";
+  for (var i = 0; i < matches.length; i++) {
+    var cleaned = matches[i].replace(/[.,;:!?)]+$/, "");
+    if (cleaned.length > 1) return cleaned;
+  }
+  return "";
+}
+
 // Creates the "Bio" sheet tab with the correct header row if it doesn't
 // exist yet, so nobody has to set it up by hand (and risk a typo'd header
 // that silently breaks column alignment).
@@ -142,31 +161,57 @@ function keywordQueueResponse_() {
                        .setMimeType(ContentService.MimeType.JSON);
 }
 
-// One-time (idempotent, safe to re-run) fix-up for rows written before the
-// Account ID feature existed. Visit this URL directly in a browser --
-// GAS_WEB_APP_URL + "?action=backfillAccountIds" -- no Python/GitHub Actions
-// run needed. Uses batched range read/write (not per-cell) so it stays fast
-// even at thousands of rows.
+// One-time (idempotent, safe to re-run) cleanup pass for rows written
+// before the Account ID / mention-recovery features existed. Visit this URL
+// directly in a browser -- GAS_WEB_APP_URL + "?action=backfillAccountIds" --
+// no Python/GitHub Actions run needed, no Oxylabs calls (pure text
+// processing on data already in the sheet). Uses batched range read/write
+// (not per-cell) so it stays fast even at thousands of rows.
+//
+// Does two things per Hasil row:
+//   1. If Instagram Handle is still a placeholder (@p/@reel/@instagram),
+//      try to recover the real handle from an @mention in Judul/Deskripsi.
+//   2. If the (possibly just-recovered) handle is real and Account ID is
+//      blank, compute and fill it.
 function backfillAccountIdsResponse_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheetRes = ss.getSheetByName("Hasil");
   var sheetBio = ss.getSheetByName("Bio");
-  var updated = { hasil: 0, bio: 0 };
+  var updated = { hasil: 0, bio: 0, handlesRecovered: 0 };
 
   if (sheetRes && sheetRes.getLastRow() > 1) {
     ensureHasilAccountIdHeader_(sheetRes);
     var numRows = sheetRes.getLastRow() - 1;
     var handles = sheetRes.getRange(2, 11, numRows, 1).getValues(); // col K
     var ids = sheetRes.getRange(2, 12, numRows, 1).getValues();     // col L
-    var newIds = ids.map(function (row, i) {
+    var judul = sheetRes.getRange(2, 5, numRows, 1).getValues();    // col E
+    var deskripsi = sheetRes.getRange(2, 8, numRows, 1).getValues(); // col H
+
+    var newHandles = [];
+    var newIds = [];
+    for (var i = 0; i < numRows; i++) {
       var handle = handles[i][0];
-      var currentId = row[0];
+      var currentId = ids[i][0];
+
+      if (!isRealHandle_(handle)) {
+        var recovered = extractMentionFallback_(
+          (judul[i][0] || "") + " " + (deskripsi[i][0] || "")
+        );
+        if (recovered) {
+          handle = recovered;
+          updated.handlesRecovered++;
+        }
+      }
+      newHandles.push([handle]);
+
       if (isRealHandle_(handle) && !currentId) {
         updated.hasil++;
-        return [computeAccountId_(handle)];
+        newIds.push([computeAccountId_(handle)]);
+      } else {
+        newIds.push([currentId]);
       }
-      return [currentId];
-    });
+    }
+    sheetRes.getRange(2, 11, numRows, 1).setValues(newHandles);
     sheetRes.getRange(2, 12, numRows, 1).setValues(newIds);
   }
 
