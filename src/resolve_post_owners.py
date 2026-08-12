@@ -131,7 +131,20 @@ def resolve_post_owner(session: requests.Session, post_url: str) -> Dict[str, An
         "url": post_url,
         "context": [
             {"key": "force_headers", "value": True},
-            {"key": "headers", "value": {"Accept": "text/html"}},
+            # Spoofing a known link-preview crawler's User-Agent. Sites
+            # commonly serve full server-rendered HTML (with og:meta
+            # intact) specifically to recognized crawlers like this one --
+            # since that's what makes their own links preview correctly on
+            # Facebook/WhatsApp -- while showing a login wall to
+            # unrecognized/generic traffic. Worth trying before concluding
+            # the technique doesn't work at all; not guaranteed to help.
+            {
+                "key": "headers",
+                "value": {
+                    "Accept": "text/html",
+                    "User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+                },
+            },
         ],
     }
 
