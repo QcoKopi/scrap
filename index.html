@@ -208,11 +208,6 @@ function normalizeGasUrl(input){
   return (input || '').trim();
 }
 
-function sheetJsonpUrl(gasUrl, sheetName, callbackName){
-  const sep = gasUrl.includes('?') ? '&' : '?';
-  return `${gasUrl}${sep}action=exportSheet&name=${encodeURIComponent(sheetName)}&callback=${callbackName}`;
-}
-
 function setUrlParams(gasUrl){
   const p = new URLSearchParams();
   if (gasUrl) p.set('gas', gasUrl);
@@ -222,42 +217,53 @@ function setUrlParams(gasUrl){
 // JSONP loader -- loads data via a <script> tag instead of fetch()/XHR,
 // which is never subject to CORS at all (script tags have always been
 // allowed to load cross-origin; that's the whole reason JSONP exists).
-let jsonpCounter = 0;
+//
+// Uses ONE fixed, statically-declared callback name (__gasJsonpCallback,
+// below) instead of a freshly-generated function name per request. A
+// dynamically-generated name assigned via `window[name] = fn` turned out
+// to be unreliable in practice (real-world testing hit
+// "ReferenceError: jsonpCb_X is not defined" when the loaded script tried
+// to invoke it). A single well-known top-level `function` declaration is
+// the standard, battle-tested JSONP pattern (this is exactly what Google
+// Maps' `callback=initMap` or YouTube's IFrame API do) -- unambiguous
+// resolution, in scope for the whole page's lifetime, nothing dynamic
+// that can go missing depending on timing.
+const pendingJsonpRequests_ = {};
+let jsonpRequestCounter_ = 0;
+
+function __gasJsonpCallback(requestId, data){
+  const pending = pendingJsonpRequests_[requestId];
+  if (!pending) return; // already timed out / cleaned up -- ignore late response
+  delete pendingJsonpRequests_[requestId];
+  clearTimeout(pending.timeoutId);
+  if (pending.script && pending.script.parentNode) pending.script.parentNode.removeChild(pending.script);
+  if (data && data.error) pending.reject(new Error(data.error));
+  else pending.resolve(data);
+}
+
 function fetchSheetJson(gasUrl, sheetName){
   return new Promise((resolve, reject) => {
-    const callbackName = 'jsonpCb_' + (jsonpCounter++) + '_' + Date.now();
+    const requestId = 'req' + (jsonpRequestCounter_++);
     const script = document.createElement('script');
-    let settled = false;
-
-    const cleanup = () => {
-      delete window[callbackName];
-      if (script.parentNode) script.parentNode.removeChild(script);
-      clearTimeout(timeoutId);
-    };
-
-    window[callbackName] = (data) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      if (data && data.error) reject(new Error(data.error));
-      else resolve(data);
-    };
-
-    script.onerror = () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(new Error('Gagal memuat data (cek URL GAS benar & sudah di-deploy)'));
-    };
+    const sep = gasUrl.includes('?') ? '&' : '?';
+    script.src = `${gasUrl}${sep}action=exportSheet&name=${encodeURIComponent(sheetName)}&callback=__gasJsonpCallback&requestId=${requestId}`;
 
     const timeoutId = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      cleanup();
+      if (!pendingJsonpRequests_[requestId]) return;
+      delete pendingJsonpRequests_[requestId];
+      if (script.parentNode) script.parentNode.removeChild(script);
       reject(new Error('Timeout memuat data'));
     }, 20000);
 
-    script.src = sheetJsonpUrl(gasUrl, sheetName, callbackName);
+    script.onerror = () => {
+      if (!pendingJsonpRequests_[requestId]) return;
+      delete pendingJsonpRequests_[requestId];
+      clearTimeout(timeoutId);
+      if (script.parentNode) script.parentNode.removeChild(script);
+      reject(new Error('Gagal memuat data (cek URL GAS benar & sudah di-deploy)'));
+    };
+
+    pendingJsonpRequests_[requestId] = { resolve, reject, script, timeoutId };
     document.head.appendChild(script);
   });
 }
