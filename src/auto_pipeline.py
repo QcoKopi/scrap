@@ -213,12 +213,20 @@ def query_oxylabs(session: requests.Session, keyword: str) -> Optional[Dict[str,
     return resp.json()
 
 
-def send_results(session: requests.Session, keyword: str, row: int, rows: List[Dict[str, Any]]) -> bool:
+def send_results(session: requests.Session, keyword: str, row: int, rows: List[Dict[str, Any]]) -> Optional[Dict[str, int]]:
     """Send ALL organic results for one keyword in a single POST call.
 
     Batching avoids hammering the Apps Script web app with one HTTP request
     per organic result (previously up to ~10 requests/keyword). At 2,300+
     keywords in the queue that adds up fast and is unnecessarily slow/fragile.
+
+    Returns {"written": N, "skippedDuplicates": M} on success (both counts
+    straight from GAS -- NOT just len(rows), since GAS silently skips rows
+    whose URL is already elsewhere in the sheet; see normalizeUrl_ /
+    appendHasilRows_ in Code.gs). Returns None on any failure. A row count
+    of 0 written with duplicates skipped > 0 is a normal, successful
+    outcome -- it means every result for this keyword was already
+    discovered by an earlier, similarly-worded keyword, not a bug.
     """
     payload: Dict[str, Any] = {"row": row, "account": keyword, "items": rows}
     if GAS_SHARED_TOKEN:
@@ -228,19 +236,22 @@ def send_results(session: requests.Session, keyword: str, row: int, rows: List[D
         resp = session.post(GAS_WEB_APP_URL, json=payload, timeout=20)
     except requests.RequestException as exc:
         print(f"  -> [GANGGUAN JARINGAN KE SHEET]: {exc}")
-        return False
+        return None
     if resp.status_code != 200:
         print(f"  -> [GAGAL KIRIM KE SHEET] Status Code: {resp.status_code}")
-        return False
+        return None
     try:
         result = resp.json()
     except json.JSONDecodeError:
         print(f"  -> [GAGAL PARSE RESPON GAS]: {resp.text[:200]}")
-        return False
+        return None
     if result.get("status") != "success":
         print(f"  -> [GAS MENOLAK]: {result}")
-        return False
-    return True
+        return None
+    return {
+        "written": result.get("written", len(rows)),
+        "skippedDuplicates": result.get("skippedDuplicates", 0),
+    }
 
 
 def main() -> None:
@@ -292,6 +303,7 @@ def main() -> None:
     )
 
     processed, failed, empty = 0, 0, 0
+    total_written, total_skipped_dupes = 0, 0
 
     for item in batch:
         row = item.get("row")
@@ -316,8 +328,18 @@ def main() -> None:
             continue
 
         print(f"  -> Ditemukan {len(rows)} hasil organik. Mengirim ke sheet Hasil (1 request)...")
-        if send_results(session, keyword, row, rows):
-            print(f"  -> [SUKSES] Keyword '{keyword}' selesai dikirim ({len(rows)} baris).")
+        send_result = send_results(session, keyword, row, rows)
+        if send_result is not None:
+            written = send_result["written"]
+            skipped = send_result["skippedDuplicates"]
+            total_written += written
+            total_skipped_dupes += skipped
+            if written > 0 and skipped == 0:
+                print(f"  -> [SUKSES] Keyword '{keyword}': {written} baris baru ditulis.")
+            elif written > 0 and skipped > 0:
+                print(f"  -> [SUKSES] Keyword '{keyword}': {written} baris baru, {skipped} sudah ada sebelumnya (di-skip).")
+            else:
+                print(f"  -> [SUKSES, TAPI TIDAK ADA BARIS BARU] Keyword '{keyword}': semua {skipped} hasil sudah ada di sheet (post/akun yang sama ketemu dari keyword lain sebelumnya).")
             processed += 1
         else:
             failed += 1
@@ -326,7 +348,8 @@ def main() -> None:
 
     remaining = total_in_queue - len(batch)
     print(
-        f"\nSelesai. Berhasil: {processed} | Kosong: {empty} | Gagal: {failed} | "
+        f"\nSelesai. Keyword berhasil diproses: {processed} | Kosong: {empty} | Gagal: {failed} | "
+        f"Baris baru ditulis ke sheet: {total_written} | Duplikat di-skip: {total_skipped_dupes} | "
         f"Sisa di antrean setelah run ini: {remaining}"
     )
     if remaining > 0:
